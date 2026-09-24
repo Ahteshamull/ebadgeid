@@ -2,7 +2,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { apiFetch } from "@/lib/api"
+import { apiFetch, setAuthToken } from "@/lib/api"
 import { useSession } from '@/hooks/use-session'
 import Link from "next/link"
 import { Bell, Globe, ChevronDown, Check, CheckCheck, MoreVertical, LogOut, ShieldAlert, Cog, MessageSquare, Award, Menu, Mail, ExternalLink } from "lucide-react"
@@ -686,6 +686,7 @@ export function Header({ onMenuClick } = {}) {
                   // JS — it has to be cleared server-side. Fire-and-forget:
                   // the local session clears regardless of whether this call
                   // succeeds.
+                  setAuthToken(null);
                   apiFetch('/auth/logout', { method: 'POST', redirectOnUnauthorized: false }).catch(() => {});
                   window.location.href = '/auth/login'
                 }}

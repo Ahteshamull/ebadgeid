@@ -524,6 +524,7 @@ exports.login = async (req, res) => {
     res.cookie(AUTH_COOKIE_NAME, token, authCookieOptions());
     const csrfToken = issueCsrfToken(res);
     res.status(200).json({
+      token,
       username: authUser.username,
       role: canonicalRole(authUser.user_role),
       organization_code: userDetails.organization_code,

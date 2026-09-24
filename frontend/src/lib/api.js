@@ -48,13 +48,29 @@ export async function ensureCsrfToken({ forceRefresh = false } = {}) {
   return csrfBootstrapPromise;
 }
 
+export function getAuthToken() {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem('ebadge_token');
+}
+
+export function setAuthToken(token) {
+  if (typeof window === 'undefined') return;
+  if (token) {
+    localStorage.setItem('ebadge_token', token);
+  } else {
+    localStorage.removeItem('ebadge_token');
+  }
+}
+
 export function getAuthHeaders(extra = {}, isFormData = false) {
+  const token = getAuthToken();
   return {
     // FormData bodies need the browser to set their own
     // `multipart/form-data; boundary=...` header — forcing
     // application/json here would break every file upload silently (the
     // server would receive an unparseable body with the wrong boundary).
     ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
+    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
     ...extra,
   };
 }
@@ -81,6 +97,7 @@ export async function apiFetch(path, options = {}) {
   // (requireAuth answers 401 for an invalid or expired token), and logging
   // someone out because they clicked an admin-only action would be wrong.
   if (redirectOnUnauthorized && response.status === 401 && typeof window !== 'undefined') {
+    setAuthToken(null);
     window.location.href = '/auth/login';
   }
 
@@ -100,6 +117,8 @@ apiClient.interceptors.request.use(async (config) => {
     ? await ensureCsrfToken()
     : null;
   config.headers ||= {};
+  const token = getAuthToken();
+  if (token) config.headers['Authorization'] = `Bearer ${token}`;
   if (csrfToken) config.headers['X-CSRF-Token'] = csrfToken;
   return config;
 });
@@ -108,6 +127,7 @@ apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401 && typeof window !== 'undefined') {
+      setAuthToken(null);
       window.location.href = '/auth/login';
     }
     return Promise.reject(error);

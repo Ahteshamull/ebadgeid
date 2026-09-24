@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { apiFetch, UPLOAD_BASE_URL } from '@/lib/api';
+import { apiFetch, UPLOAD_BASE_URL, getAuthHeaders } from '@/lib/api';
 import { useSession } from '@/hooks/use-session';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -205,6 +205,7 @@ export default function SettingsPage() {
     const response = await fetch(`${UPLOAD_BASE_URL}/api/uploads`, {
       method: 'POST',
       credentials: 'include',
+      headers: getAuthHeaders({}, true),
       body: formData,
     });
     
@@ -974,7 +975,12 @@ const BrandKitSettings = () => {
       const formData = new FormData();
       formData.append('file', file);
       formData.append('visibility', 'private');
-      const response = await fetch(`${UPLOAD_BASE_URL}/api/uploads`, { method: 'POST', credentials: 'include', body: formData });
+      const response = await fetch(`${UPLOAD_BASE_URL}/api/uploads`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: getAuthHeaders({}, true),
+        body: formData,
+      });
       if (!response.ok) throw new Error('Failed to upload logo');
       const result = await response.json();
       setBrandKit((prev) => ({ ...prev, logo_url: result.url }));
