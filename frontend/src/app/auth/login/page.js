@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { Eye, EyeOff, Fingerprint, Loader2, ShieldCheck } from "lucide-react"
-import { API_BASE_URL, ensureCsrfToken, setCsrfToken } from "@/lib/api"
+import { API_BASE_URL, ensureCsrfToken, setCsrfToken, setAuthToken } from "@/lib/api"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -40,11 +40,15 @@ export default function LoginPage() {
       const result = await response.json().catch(() => ({}))
       if (response.status === 403 && /csrf/i.test(result.message || "")) {
         setCsrfToken(null)
+        setAuthToken(null)
         throw new Error("Your security session expired. Please try signing in again.")
       }
       if (!response.ok) throw new Error(result.message || "Invalid credentials")
       // Login rotates the CSRF cookie together with the session cookie. Keep
       // the matching returned synchronizer token for the next API mutation.
+      if (result.token) {
+        setAuthToken(result.token)
+      }
       setCsrfToken(result.csrfToken)
       window.location.assign(result.role === "user" ? "/user_dash" : "/reports/organizations")
     } catch (requestError) {
