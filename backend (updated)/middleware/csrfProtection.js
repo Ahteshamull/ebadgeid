@@ -5,8 +5,8 @@ const AUTH_COOKIE_NAME = 'ebadge_token';
 
 const cookieOptions = () => ({
   httpOnly: false,
-  secure: process.env.NODE_ENV === 'production',
-  sameSite: 'strict',
+  secure: true,
+  sameSite: 'none',
   ...(process.env.AUTH_COOKIE_DOMAIN ? { domain: process.env.AUTH_COOKIE_DOMAIN } : {}),
   maxAge: 24 * 60 * 60 * 1000,
 });

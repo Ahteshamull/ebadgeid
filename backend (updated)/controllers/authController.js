@@ -16,8 +16,8 @@ const logger = require('../utils/logger');
 const AUTH_COOKIE_NAME = 'ebadge_token';
 const authCookieBaseOptions = () => ({
   httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',
-  sameSite: 'strict',
+  secure: true,
+  sameSite: 'none',
   path: '/',
 });
 const authCookieOptions = () => ({
