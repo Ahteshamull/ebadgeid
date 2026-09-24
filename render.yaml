@@ -1,7 +1,7 @@
 services:
   - type: web
     name: ebadgeid-api
-    runtime: node
+    env: node
     rootDir: backend (updated)
     buildCommand: npm install
     startCommand: node api.js
