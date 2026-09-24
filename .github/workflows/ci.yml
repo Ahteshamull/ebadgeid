@@ -1,0 +1,199 @@
+name: CI
+
+# Runs on every push and PR against main. Matrix covers all 5 services —
+# the two backends (no build step, plain Node) and three frontends
+# (Next.js, with a production build step) — plus real docker-build jobs on
+# both amd64 and arm64. This is the workflow that would have caught,
+# automatically and on every commit, several bugs found manually during
+# the audit rounds: the stale/conflicting pnpm lockfiles, dependencies
+# with zero real consumers, the broken `require("../sseManager")` in a
+# since-removed controller, and (the reason docker-build-arm64 exists) a
+# frontend lockfile missing the linux-arm64-musl native binary for
+# lightningcss, which broke `docker build` on any arm64 host (any Apple
+# Silicon Mac, any Graviton instance) while looking completely fine on
+# amd64 — all of these were only found because someone happened to run
+# these exact commands by hand. See AUDIT_FIXES.md for the full history.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend-services:
+    name: ${{ matrix.service.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - name: backend
+            path: "backend (updated)"
+          - name: help_backend
+            path: help_backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: "${{ matrix.service.path }}/package-lock.json"
+
+      - name: Install
+        working-directory: ${{ matrix.service.path }}
+        run: npm ci --no-audit --no-fund
+
+      - name: Audit (fails the build on any known vulnerability)
+        working-directory: ${{ matrix.service.path }}
+        run: npm audit --omit=dev
+
+      # Found by the first real run of this CI (not by reading code): with
+      # no .env file at all -- correctly never committed, and this step
+      # never existed before -- ALLOWED_ORIGINS resolves to an empty list.
+      # api.js's two independent origin checks disagree about what that
+      # should mean: the cors() middleware treats an empty allowlist as
+      # "allow everything" (a deliberate local-dev fallback), while the
+      # separate defense-in-depth Origin check on state-changing routes
+      # does the opposite and rejects every request that carries an Origin
+      # header at all. Every real deployment (and every local run so far,
+      # which always has a real backend (updated)/.env) has ALLOWED_ORIGINS
+      # set, so this mismatch only ever surfaces in a from-scratch CI
+      # checkout -- this makes CI match that same real condition instead
+      # of leaving ALLOWED_ORIGINS unset.
+      - name: Set up test environment
+        working-directory: ${{ matrix.service.path }}
+        run: cp .env.example .env
+
+      - name: Test
+        working-directory: ${{ matrix.service.path }}
+        # mongodb-memory-server 11 currently defaults to an ARM64 Debian
+        # archive that MongoDB does not publish (8.2.x). Pin a real
+        # ARM64-compatible Ubuntu 22.04 archive instead; Ubuntu runners
+        # and Debian-compatible containers can execute it on both CI
+        # architectures. This is an explicit test-runtime choice, not a
+        # production MongoDB version change.
+        env:
+          MONGOMS_VERSION: '8.0.17'
+          MONGOMS_DISTRO: 'ubuntu-22.04'
+        run: npm test
+
+      - name: Syntax check every .js file
+        working-directory: ${{ matrix.service.path }}
+        run: |
+          find . -iname "*.js" -not -path "./node_modules/*" -print0 \
+            | xargs -0 -n1 node --check
+
+  frontend-services:
+    name: ${{ matrix.service.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - name: frontend
+            path: frontend
+          - name: helpdesk_frontend
+            path: helpdesk_frontend
+          - name: contract
+            path: contract
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: "${{ matrix.service.path }}/package-lock.json"
+
+      - name: Install
+        working-directory: ${{ matrix.service.path }}
+        run: npm ci --no-audit --no-fund
+
+      - name: Audit (fails the build on any known vulnerability)
+        working-directory: ${{ matrix.service.path }}
+        run: npm audit --omit=dev
+
+      - name: Test
+        working-directory: ${{ matrix.service.path }}
+        run: npm test
+
+      - name: Lint
+        working-directory: ${{ matrix.service.path }}
+        run: npm run lint
+
+      - name: Production build
+        working-directory: ${{ matrix.service.path }}
+        run: npm run build
+
+  certificate-service:
+    name: certificate-service
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: "backend (updated)/requirements-certificate.txt"
+      - name: Install and audit dependencies
+        run: |
+          python -m pip install -r "backend (updated)/requirements-certificate.txt" pip-audit
+          pip-audit -r "backend (updated)/requirements-certificate.txt"
+      - name: Compile and smoke test
+        env:
+          PYTHONPATH: backend (updated)
+          NODE_ENV: development
+          CERTIFICATE_INTERNAL_KEY: ci-test-only
+          TEMPLATE_ALLOWED_HOSTS: storage
+        run: |
+          python -m py_compile "backend (updated)/utils/main.py"
+          python -c "import asyncio; from utils.main import health_check; assert asyncio.run(health_check()) == {'status':'healthy'}"
+
+  infrastructure:
+    name: compose-validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare non-secret validation configuration
+        run: |
+          cp .env.example .env
+          cp "backend (updated)/.env.example" "backend (updated)/.env"
+          cp help_backend/.env.example help_backend/.env
+      - name: Validate Compose graph
+        run: docker compose config --quiet
+
+  # "docker compose config" above only parses the YAML -- it never actually
+  # builds an image, so a broken Dockerfile (or, as found in an audit
+  # round, a lockfile missing the native binary for a given platform) can
+  # reach main undetected. These two jobs actually build every image in
+  # docker-compose.yml for real, on both architectures that matter in
+  # practice (amd64 CI/cloud runners, arm64 Apple Silicon dev machines and
+  # Graviton cloud instances) -- native runners, no QEMU emulation, so a
+  # platform-specific native-dependency bug shows up exactly like it would
+  # on a real machine of that architecture.
+  docker-build-amd64:
+    name: docker-build (amd64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare non-secret validation configuration
+        run: |
+          cp .env.example .env
+          cp "backend (updated)/.env.example" "backend (updated)/.env"
+          cp help_backend/.env.example help_backend/.env
+      - name: Build every image in docker-compose.yml
+        run: docker compose build
+
+  docker-build-arm64:
+    name: docker-build (arm64)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare non-secret validation configuration
+        run: |
+          cp .env.example .env
+          cp "backend (updated)/.env.example" "backend (updated)/.env"
+          cp help_backend/.env.example help_backend/.env
+      - name: Build every image in docker-compose.yml
+        run: docker compose build

@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: ebadgeid-api
+    runtime: node
+    rootDir: backend (updated)
+    buildCommand: npm install
+    startCommand: node api.js
+    plan: free
+    envVars:
+      - key: PORT
+        value: 5000
+      - key: NODE_ENV
+        value: development
+      - key: MONGO_URI
+        value: mongodb+srv://elena:elena@elena.1igq06i.mongodb.net/ebadgeid?retryWrites=true&w=majority&appName=elena
+      - key: JWT_SECRET
+        value: c8d9e72847a61d5f309b5c28e932b145a8f4c719e2304918237d45a9b1c78e90
+      - key: HELPDESK_JWT_SECRET
+        value: d9e0f12958b72e6041ac6d39fa43c256b905d820f3415029348e56bac2d89fa1
+      - key: ENCRYPTION_SECRET
+        value: a1b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef0123456789abcdef0
+      - key: STORAGE_FILE_SIGNING_KEY
+        value: abcdef0123456789a1b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef0
+      - key: ALLOWED_ORIGINS
+        value: http://localhost:3000
+      - key: PUBLIC_API_BASE_URL
+        value: http://localhost:5000
+      - key: PUBLIC_APP_URL
+        value: http://localhost:3000
+      - key: PUBLIC_STORAGE_BASE_URL
+        value: http://localhost:9000

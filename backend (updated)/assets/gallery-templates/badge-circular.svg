@@ -1,0 +1,14 @@
+<svg viewBox="0 0 900 636" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="badgeGrad" cx="50%" cy="40%" r="65%">
+      <stop offset="0%" stop-color="#f5e6b8"/>
+      <stop offset="100%" stop-color="#c9a44c"/>
+    </radialGradient>
+  </defs>
+  <rect width="900" height="636" fill="#ffffff"/>
+  <path d="M410 400 L370 570 L450 510 L530 570 L490 400 Z" fill="#7a1f2b"/>
+  <circle cx="450" cy="270" r="190" fill="url(#badgeGrad)"/>
+  <circle cx="450" cy="270" r="190" fill="none" stroke="#8a6a1f" stroke-width="6"/>
+  <circle cx="450" cy="270" r="160" fill="#fffdf5" stroke="#c9a44c" stroke-width="2"/>
+  <circle cx="450" cy="270" r="134" fill="none" stroke="#c9a44c" stroke-width="1" stroke-dasharray="4 6"/>
+</svg>

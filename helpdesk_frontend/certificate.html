@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Certificate of Completion</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f0f0f0;
+            margin: 0;
+            padding: 40px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        
+        .certificate-container {
+            position: relative;
+            width: 800px;
+            background-color: white;
+            padding: 40px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .decorative-seal {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 100px;
+            height: 100px;
+            opacity: 0.7;
+        }
+        
+        .corner-top-left {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100px;
+            height: 100px;
+            background-color: #0a5e63;
+            clip-path: polygon(0 0, 100% 0, 0 100%);
+        }
+        
+        .corner-bottom-right {
+            position: absolute;
+            bottom: 0;
+            right: 0;
+            width: 100px;
+            height: 100px;
+            background-color: #0a5e63;
+            clip-path: polygon(100% 0, 100% 100%, 0 100%);
+        }
+        
+        .certificate-header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .certificate-title {
+            font-size: 48px;
+            font-weight: bold;
+            color: #11171a;
+            margin: 0;
+            letter-spacing: 2px;
+        }
+        
+        .certificate-subtitle {
+            font-size: 24px;
+            color: #11171a;
+            margin: 0;
+            margin-top: 5px;
+        }
+        
+        .award-text {
+            background-color: #0a5e63;
+            color: white;
+            text-align: center;
+            padding: 10px 20px;
+            font-size: 18px;
+            margin: 30px 0;
+            clip-path: polygon(0 0, 95% 0, 100% 50%, 95% 100%, 0 100%);
+        }
+        
+        .recipient-name {
+            text-align: center;
+            font-size: 40px;
+            font-family: 'Brush Script MT', cursive;
+            margin: 40px 0;
+            color: #11171a;
+        }
+        
+        .certificate-text {
+            text-align: center;
+            font-size: 18px;
+            margin: 30px 0;
+            color: #11171a;
+        }
+        
+        .certificate-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            margin-top: 40px;
+        }
+        
+        .signature {
+            flex: 1;
+            text-align: center;
+            border-top: 1px solid #333;
+            padding-top: 10px;
+            margin: 0 20px;
+        }
+        
+        .signature-name {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        
+        .signature-title {
+            font-size: 14px;
+        }
+        
+        .certificate-seal {
+            display: flex;
+            justify-content: center;
+            margin: 20px 0;
+        }
+        
+        .qr-code {
+            width: 100px;
+            height: 100px;
+            border: 2px solid #0a5e63;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+            background-image: linear-gradient(to right, #0a5e63 25%, transparent 25%, transparent 75%, #0a5e63 75%),
+                              linear-gradient(to bottom, #0a5e63 25%, transparent 25%, transparent 75%, #0a5e63 75%);
+            background-size: 20px 20px;
+            background-position: 0 0, 10px 10px;
+        }
+        
+        .qr-code::before {
+            content: 'QR';
+            font-size: 20px;
+            font-weight: bold;
+            color: #0a5e63;
+        }
+    </style>
+</head>
+<body>
+    <div class="certificate-container">
+        <div class="corner-top-left"></div>
+        <div class="corner-bottom-right"></div>
+        <img src="https://st2.depositphotos.com/1431107/8761/v/450/depositphotos_87617108-stock-illustration-blank-guarantee-certificate.jpg" alt="Decorative Seal" class="decorative-seal">
+        
+        <div class="certificate-header">
+            <h1 class="certificate-title">CERTIFICATE</h1>
+            <h2 class="certificate-subtitle">OF COMPLETION</h2>
+        </div>
+        
+        <div class="award-text">
+            This certificate is awarded to
+        </div>
+        
+        <div class="recipient-name">
+            YOUR NAME
+        </div>
+        
+        <div class="certificate-text">
+            For completing <strong>40 hours</strong> of course about digital<br>
+            marketing, on 26 November 2025.
+        </div>
+        
+        <div class="certificate-seal">
+            <div class="qr-code"></div>
+        </div>
+        
+        <div class="certificate-footer">
+            <div class="signature">
+                <div class="signature-name">Gerrard Wade</div>
+                <div class="signature-title">Virtual Teacher</div>
+            </div>
+            
+            <div class="signature">
+                <div class="signature-name">Marianne Olsen</div>
+                <div class="signature-title">Virtual Instructor</div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

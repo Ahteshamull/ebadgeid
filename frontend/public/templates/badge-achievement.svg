@@ -1,0 +1,14 @@
+<svg viewBox="0 0 900 636" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="hexGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6d28d9"/>
+      <stop offset="50%" stop-color="#db2777"/>
+      <stop offset="100%" stop-color="#f59e0b"/>
+    </linearGradient>
+  </defs>
+  <rect width="900" height="636" fill="#111827"/>
+  <polygon points="450,50 630,155 630,365 450,470 270,365 270,155" fill="url(#hexGrad)"/>
+  <polygon points="450,95 585,172 585,348 450,425 315,348 315,172" fill="#111827"/>
+  <polygon points="450,130 550,187 550,333 450,390 350,333 350,187" fill="none" stroke="url(#hexGrad)" stroke-width="3"/>
+  <path d="M450 200 L468 245 L515 245 L478 272 L494 318 L450 289 L406 318 L422 272 L385 245 L432 245 Z" fill="#f5e6b8"/>
+</svg>

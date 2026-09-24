@@ -1,0 +1,16 @@
+# Use only in an isolated staging host: docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d
+services:
+  api:
+    environment:
+      NODE_ENV: production
+  storage:
+    environment:
+      NODE_ENV: production
+  app:
+    restart: unless-stopped
+  super-admin:
+    restart: unless-stopped
+  contracts:
+    restart: unless-stopped
+  helpdesk:
+    restart: unless-stopped

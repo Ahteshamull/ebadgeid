@@ -1,0 +1,10 @@
+FROM python:3.13-slim
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 FONT_CACHE_DIR=/app/fonts
+COPY requirements-certificate.txt ./
+RUN pip install --no-cache-dir -r requirements-certificate.txt
+COPY --chown=65532:65532 utils/main.py ./utils/main.py
+COPY --chown=65532:65532 utils/fonts ./fonts
+USER 65532:65532
+EXPOSE 8100
+CMD ["uvicorn", "utils.main:app", "--host", "0.0.0.0", "--port", "8100", "--no-access-log"]

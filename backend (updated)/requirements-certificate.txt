@@ -1,0 +1,6 @@
+fastapi==0.141.1
+pillow==12.3.0
+pydantic==2.13.4
+qrcode==8.2
+requests==2.34.2
+uvicorn==0.52.3

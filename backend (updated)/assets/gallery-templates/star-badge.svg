@@ -1,0 +1,13 @@
+<svg viewBox="0 0 900 636" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="starGrad" cx="50%" cy="38%" r="60%">
+      <stop offset="0%" stop-color="#fff6d8"/>
+      <stop offset="100%" stop-color="#e8b93f"/>
+    </radialGradient>
+  </defs>
+  <rect width="900" height="636" fill="#fffdf5"/>
+  <polygon points="450,80 487,205 618,205 512,281 550,406 450,328 350,406 388,281 282,205 413,205"
+    fill="url(#starGrad)" stroke="#c9861f" stroke-width="4"/>
+  <circle cx="450" cy="243" r="120" fill="#fffdf5" stroke="#c9861f" stroke-width="2" opacity="0.92"/>
+  <circle cx="450" cy="243" r="98" fill="none" stroke="#e8b93f" stroke-width="1" stroke-dasharray="3 5"/>
+</svg>

@@ -1,0 +1,15 @@
+<svg viewBox="0 0 900 636" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="navyGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1a2f5c"/>
+      <stop offset="100%" stop-color="#3a5490"/>
+    </linearGradient>
+  </defs>
+  <rect width="900" height="636" fill="#f7f8fb"/>
+  <rect x="18" y="18" width="864" height="600" fill="none" stroke="url(#navyGrad)" stroke-width="7"/>
+  <rect x="40" y="40" width="820" height="556" fill="none" stroke="#1a2f5c" stroke-width="1"/>
+  <polygon points="450,90 470,130 514,130 480,156 494,198 450,172 406,198 420,156 386,130 430,130" fill="#c9a44c"/>
+  <line x1="240" y1="220" x2="660" y2="220" stroke="#1a2f5c" stroke-width="1"/>
+  <line x1="270" y1="455" x2="450" y2="455" stroke="#1a2f5c" stroke-width="1"/>
+  <line x1="450" y1="455" x2="630" y2="455" stroke="#1a2f5c" stroke-width="1"/>
+</svg>

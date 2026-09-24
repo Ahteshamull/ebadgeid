@@ -1,0 +1,442 @@
+services:
+  mongo:
+    image: mongo:7
+    # --auth + --keyFile: added by the security audit round. Previously ran
+    # with neither -- confirmed for real (not inferred) that any container
+    # on this docker network, with zero credentials, could connect and read
+    # every organization's data across both databases (ebadgeid and
+    # ebadgeid_helpdesk). A keyFile is required for replica-set internal
+    # member authentication as soon as --auth is set, even for this
+    # single-node replica set. The command copies the read-only-mounted
+    # keyfile into the data volume first and fixes its ownership/permissions
+    # there (mongod refuses to start with a keyfile it doesn't itself own
+    # with 0400) -- verified in an isolated rehearsal container before being
+    # applied here, including that existing data survives the switch and
+    # that a genuinely unauthenticated connection is rejected afterward.
+    entrypoint: ["/bin/sh", "/run/secrets/mongo-entrypoint.sh"]
+    restart: unless-stopped
+    # CRIT-01 fix (real deployment failure, reproduced and confirmed): on a
+    # genuinely empty volume, mongod came up with --auth already enforced
+    # but no root user existed yet to create it with -- the healthcheck
+    # below (which authenticates as root) could never pass, so mongo-init,
+    # every migration, and the API all stayed blocked forever. The
+    # documented workaround (PRODUCTION_RUNBOOK.md 1.b, now removed) was to
+    # comment out --auth/--keyFile by hand, create users, then restore
+    # them -- not a repeatable, declarative recovery path.
+    #
+    # Fixed using the official mongo image's own supported bootstrap
+    # mechanism instead of fighting it: MONGO_INITDB_ROOT_USERNAME/PASSWORD
+    # make the entrypoint script (invoked explicitly above -- the previous
+    # command called `mongod` directly, skipping the entrypoint's bootstrap
+    # logic entirely) start a temporary, loopback-only mongod instance with
+    # no --auth/--replSet, create the root user there, then run every
+    # script in /docker-entrypoint-initdb.d/ (mongo-init-users.js below --
+    # already written for exactly this convention, just never wired in)
+    # against it, THEN shut it down and start the real, network-facing
+    # instance with the full --auth --keyFile --replSet from the command
+    # above. Verified empirically, in isolation, on a genuinely empty
+    # volume: root and all 3 app users get created automatically, an
+    # unauthenticated data read is still correctly rejected afterward
+    # ("Command find requires authentication"), and docker compose up
+    # reaches mongo/mongo-init/api all healthy with zero manual steps.
+    # On a deployment that already has these users (this one), the
+    # bootstrap is a safe no-op -- it only ever runs on a first-ever start
+    # of an empty data directory, never against existing data.
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD}
+      MONGO_HELPDESK_APP_PASSWORD: ${MONGO_HELPDESK_APP_PASSWORD}
+      MONGO_BACKUP_PASSWORD: ${MONGO_BACKUP_PASSWORD}
+    volumes:
+      - mongo_data:/data/db
+      # Generated locally by scripts/bootstrap-env.js.  Do not use the old
+      # secrets/mongo-keyfile path: source ZIPs deliberately exclude secrets
+      # and an empty directory at that path makes a clean deployment fail.
+      - ./runtime-secrets/mongo-keyfile:/run/secrets/mongo-keyfile:ro
+      - ./scripts/mongo-entrypoint.sh:/run/secrets/mongo-entrypoint.sh:ro
+      - ./scripts/mongo-init-users.js:/docker-entrypoint-initdb.d/mongo-init-users.js:ro
+    healthcheck:
+      # No longer an unauthenticated ping -- see the command above. This
+      # authenticates as the root user (env below) purely to prove the
+      # database is actually reachable AND that auth is actually being
+      # enforced, not just that the process is listening.
+      test: ["CMD", "mongosh", "--quiet", "-u", "root", "-p", "${MONGO_ROOT_PASSWORD}", "--authenticationDatabase", "admin", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  mongo-init:
+    image: mongo:7
+    restart: "no"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    # Authenticated as root -- now created automatically by mongo's own
+    # bootstrap (see MONGO_INITDB_ROOT_USERNAME above) before this ever
+    # runs, on a brand-new deployment same as an existing one. On existing
+    # data (the replica set already initiated) this just confirms
+    # rs.status() and exits 0 without touching anything; on a genuinely
+    # empty volume it runs rs.initiate() for the first time.
+    command:
+      - mongosh
+      - mongodb://root:${MONGO_ROOT_PASSWORD}@mongo:27017/admin?authSource=admin
+      - --quiet
+      - --eval
+      - >-
+        try { rs.status() } catch (error) {
+          rs.initiate({_id:'rs0',members:[{_id:0,host:'mongo:27017'}]})
+        }
+
+  redis:
+    # Optional in the sense that the API degrades safely without it (see
+    # utils/cache.js, queues/bulkIssuanceQueue.js) — but included here so
+    # `docker compose up` gives you caching and bulk-issuance working out
+    # of the box instead of silently running without them.
+    # --requirepass: added by a security audit round -- previously ran
+    # with no authentication at all. Not exposed to the host (no `ports:`
+    # here), so the real-world risk was only ever another container on
+    # this same Docker network, not the public internet -- but "another
+    # container on the network" is exactly the threat model every other
+    # service here (Mongo, the SAML replay-protection store this same
+    # Redis backs) is otherwise held to.
+    image: redis:7-alpine
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: "./backend (updated)"
+    restart: unless-stopped
+    env_file: "./backend (updated)/.env"
+    environment:
+      # Authenticated as of the security audit round -- see the mongo
+      # service's own comment above for what this closes. authSource=ebadgeid
+      # is required because this user is defined ON the ebadgeid database
+      # (least-privilege: readWrite on ebadgeid only, not admin/root), not on
+      # admin -- without it, the driver defaults to authenticating against
+      # the database in the connection path only when no authSource is
+      # given, which happens to be right here, but stating it explicitly
+      # means this URI keeps working even if the path segment ever changes.
+      MONGO_URI: mongodb://ebadgeid_app:${MONGO_APP_PASSWORD}@mongo:27017/ebadgeid?replicaSet=rs0&authSource=ebadgeid
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      CERTIFICATE_SERVICE_URL: http://certificate:8100
+      STORAGE_INTERNAL_BASE_URL: http://storage:9000
+      # CRIT-02 fix (real deployment failure, reproduced and confirmed):
+      # these 3 were hardcoded literal strings, not ${VAR} substitutions --
+      # meaning even a fully-correct, HTTPS, production backend (updated)/.env
+      # was silently overridden right back to localhost by this file
+      # (Compose's `environment:` always wins over `env_file:`). The API's
+      # own startup check (api.js requiring HTTPS for these in production,
+      # see services/emailService.js's constructor) was actually the ONLY
+      # thing catching this -- by crash-looping the container, not by a
+      # clear upfront error. `${VAR:-default}` preserves today's local-dev
+      # defaults exactly (nothing changes if these aren't set) while making
+      # a real deployment's root .env actually take effect. See
+      # PRODUCTION_RUNBOOK.md and scripts/preflight-production.js.
+      PUBLIC_STORAGE_BASE_URL: ${PUBLIC_STORAGE_BASE_URL:?Set PUBLIC_STORAGE_BASE_URL in .env}
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:?Set PUBLIC_APP_URL in .env}
+      # The onboarding/Super Admin origin. The API needs it (not just the
+      # frontend build) so a password recovery started from that app gets
+      # an emailed link back to THAT origin instead of the main app --
+      # see authController.js's resolveResetAppBaseUrl, which allowlists
+      # exactly these two declared origins and ignores anything else.
+      PUBLIC_SUPER_ADMIN_URL: ${PUBLIC_SUPER_ADMIN_URL:-http://localhost:3003}
+      # Used to build the Tilopay hosted-payment-page return URL (see
+      # routes/organizationRoutes.js's /self-signup) -- must be the address
+      # a customer's browser and Tilopay's own servers can actually reach,
+      # never the container-internal http://api:5000 that req.get('host')
+      # would otherwise fall back to. In production this must be the real
+      # public HTTPS API domain.
+      PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:?Set PUBLIC_API_BASE_URL in .env}
+      CONTRACT_APP_URL: ${PUBLIC_CONTRACT_APP_URL:?Set PUBLIC_CONTRACT_APP_URL in .env}
+      STORAGE_FILE_SIGNING_KEY: ${STORAGE_FILE_SIGNING_KEY:?Set STORAGE_FILE_SIGNING_KEY in .env}
+      # Empty by default -- an org's LMS sync config (routes/lmsWebhookRoutes.js
+      # PUT /config) is rejected outright until this lists the operator-
+      # approved LMS hostnames (comma-separated, `*.suffix` wildcards
+      # allowed). See utils/lmsSyncUrl.js.
+      LMS_SYNC_ALLOWED_HOSTS: ${LMS_SYNC_ALLOWED_HOSTS:-}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      certificate:
+        condition: service_healthy
+    # Host-side 5050, not 5000 -- port 5000 on macOS is bound by
+    # ControlCenter/AirPlay, not available to this stack. Internal
+    # container-to-container traffic (app -> api, healthcheck below) is
+    # unaffected either way, since that uses the docker network's own
+    # :5000, never the host mapping. Must stay in sync with the app
+    # service's NEXT_PUBLIC_API_BASE_URL build arg.
+    ports: ["5050:5000"]
+    volumes:
+      - uploads_data:/app/uploads
+      # Signed contract PDFs -- deliberately not under uploads_data/storage
+      # service. These are served only through an authenticated, permission-
+      # checked route (GET /:contract_code/private-files/:filename in
+      # digitalContractRoutes.js), never through the public storage service.
+      - private_contracts_data:/app/private-contracts
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # E2E audit finding H-02: the daily expiry-notification and blockchain-
+  # anchor-batch jobs (scripts/notifyExpiringCredentials.js,
+  # scripts/anchorDailyBatch.js) were both fully implemented and
+  # independently testable, but nothing ever actually triggered them --
+  # no OS crontab, no scheduled CI workflow, no scheduler service here.
+  # This is that missing trigger: one process (scripts/cronRunner.js)
+  # using the exact same image as api, backed by the same real Redis/
+  # BullMQ job-queue infrastructure already used for bulk credential
+  # issuance (see queues/bulkIssuanceQueue.js) rather than a standalone
+  # in-process timer -- Redis, not this container's own memory, is the
+  # source of truth for "has this occurrence already run," so this stays
+  # safe even if it's ever scaled to more than one replica. Survives a
+  # full server reboot the same way every other service here does:
+  # `restart: unless-stopped` plus the Docker daemon itself starting on
+  # boot (`sudo systemctl enable docker` on the host) -- see
+  # PRODUCTION_RUNBOOK.md.
+  cron:
+    build: "./backend (updated)"
+    command: ["node", "scripts/cronRunner.js"]
+    restart: unless-stopped
+    env_file: "./backend (updated)/.env"
+    environment:
+      MONGO_URI: mongodb://ebadgeid_app:${MONGO_APP_PASSWORD}@mongo:27017/ebadgeid?replicaSet=rs0&authSource=ebadgeid
+      # Dedicated read-only user (see PRODUCTION_RUNBOOK.md) -- the
+      # backup-database scheduled job can read both databases but has no
+      # write role anywhere, on either database.
+      MONGO_BACKUP_URI: mongodb://backup_reader:${MONGO_BACKUP_PASSWORD}@mongo:27017/admin?replicaSet=rs0&authSource=admin
+      # Root credential -- only used by a human deliberately running
+      # scripts/restoreBackupTest.js (never by the automated schedule
+      # above, which has no restore-test job registered at all).
+      MONGO_RESTORE_URI: mongodb://root:${MONGO_ROOT_PASSWORD}@mongo:27017/admin?replicaSet=rs0&authSource=admin
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:?Set PUBLIC_APP_URL in .env}
+    volumes:
+      - backups_data:/app/backups
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  migrate:
+    build: "./backend (updated)"
+    command: ["node", "scripts/migrate.js"]
+    restart: "no"
+    env_file: "./backend (updated)/.env"
+    environment:
+      MONGO_URI: mongodb://ebadgeid_app:${MONGO_APP_PASSWORD}@mongo:27017/ebadgeid?replicaSet=rs0&authSource=ebadgeid
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+
+  storage:
+    build: "./backend (updated)"
+    command: ["node", "storage.js"]
+    restart: unless-stopped
+    env_file: "./backend (updated)/.env"
+    environment:
+      PORT: 9000
+      MONGO_URI: mongodb://ebadgeid_app:${MONGO_APP_PASSWORD}@mongo:27017/ebadgeid?replicaSet=rs0&authSource=ebadgeid
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      PUBLIC_STORAGE_BASE_URL: ${PUBLIC_STORAGE_BASE_URL:?Set PUBLIC_STORAGE_BASE_URL in .env}
+      ALLOW_LEGACY_PUBLIC_UPLOADS: ${ALLOW_LEGACY_PUBLIC_UPLOADS:-true}
+      STORAGE_FILE_SIGNING_KEY: ${STORAGE_FILE_SIGNING_KEY:?Set STORAGE_FILE_SIGNING_KEY in .env}
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports: ["9000:9000"]
+    volumes:
+      - uploads_data:/app/uploads
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  certificate:
+    build:
+      context: "./backend (updated)"
+      dockerfile: Dockerfile.certificate
+    restart: unless-stopped
+    env_file: "./backend (updated)/.env"
+    environment:
+      TEMPLATE_ALLOWED_HOSTS: storage
+    # Image processing (Pillow, template rendering) is the one workload in
+    # this compose file that can spike CPU/memory on a malicious or oversized
+    # template — the request handler already caps input/output at 15MB (see
+    # certificateController.js), these are the container-level backstop.
+    # Plain `mem_limit`/`cpus` (not `deploy.resources`) so they apply under a
+    # normal `docker compose up`, not only swarm mode.
+    mem_limit: 512m
+    cpus: 1.0
+    depends_on:
+      storage:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8100/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  help-api:
+    build: ./help_backend
+    restart: unless-stopped
+    env_file: ./help_backend/.env
+    environment:
+      # Least-privilege: this user has readWrite on ebadgeid_helpdesk only --
+      # it cannot read the main ebadgeid database even now that both share
+      # one mongod, closing that off at the database layer too, not just in
+      # application code.
+      MONGO_URI: mongodb://ebadgeid_helpdesk_app:${MONGO_HELPDESK_APP_PASSWORD}@mongo:27017/ebadgeid_helpdesk?replicaSet=rs0&authSource=ebadgeid_helpdesk
+      PUBLIC_STORAGE_BASE_URL: ${PUBLIC_STORAGE_BASE_URL:?Set PUBLIC_STORAGE_BASE_URL in .env}
+    depends_on:
+      help-migrate:
+        condition: service_completed_successfully
+    ports: ["8000:8000"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  help-migrate:
+    build: ./help_backend
+    command: ["node", "scripts/migrate.js"]
+    restart: "no"
+    env_file: ./help_backend/.env
+    environment:
+      MONGO_URI: mongodb://ebadgeid_helpdesk_app:${MONGO_HELPDESK_APP_PASSWORD}@mongo:27017/ebadgeid_helpdesk?replicaSet=rs0&authSource=ebadgeid_helpdesk
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+
+  app:
+    build:
+      context: ./frontend
+      args:
+        # Permanently 5050, not 5000 -- on this host, port 5000 is bound by
+        # macOS ControlCenter/AirPlay, not this stack. The api service
+        # below is mapped to the host as 5050:5000 for exactly the same
+        # reason. A real browser hitting this app used to have every
+        # normal API call (including the post-SSO session check,
+        # GET /api/auth/me) silently fail against port 5000 -- confirmed
+        # for real: the SAML login itself completed correctly server-side,
+        # but the browser could never reach 5000 to confirm the session
+        # afterward, and bounced back to /auth/login. This must stay in
+        # sync with the api service's host port mapping.
+        # CRIT-02 fix: ${VAR:-default} instead of a hardcoded literal, so a
+        # real deployment's root .env actually reaches the frontend build --
+        # NEXT_PUBLIC_* values are inlined into the compiled JS at build
+        # time, so a hardcoded localhost here would have shipped literally
+        # to every real visitor's browser in production, not just failed
+        # server-side like the backend's own PUBLIC_* vars did.
+        NEXT_PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:?Set PUBLIC_API_BASE_URL in .env}/api
+        NEXT_PUBLIC_UPLOAD_BASE_URL: ${PUBLIC_STORAGE_BASE_URL:?Set PUBLIC_STORAGE_BASE_URL in .env}
+        # Backend's address on the docker network -- used only by the SAML
+        # rewrite in next.config.mjs (server-side proxy for
+        # /api/auth/saml/*, so the ACS/Entity ID URLs registered with an
+        # IdP under this app's own origin actually reach the backend
+        # instead of 404ing on Next.js itself). Must be a build arg, not a
+        # runtime `environment:` entry -- see the Dockerfile's own comment
+        # on SAML_BACKEND_URL for why a runtime-only value here is
+        # silently ignored (confirmed for real, not assumed).
+        SAML_BACKEND_URL: http://api:5000
+    depends_on:
+      api:
+        condition: service_healthy
+    ports: ["3000:3000"]
+
+  # Source recovered from the production Super Admin application on
+  # 2026-08-29 and now included in this repository.  It deliberately has a
+  # separate service and host port so that it can be built and validated
+  # without replacing the primary administrator application.
+  super-admin:
+    build:
+      context: ./frontend_super_admin
+      args:
+        # SA-02 fix: this service previously passed no build args at all --
+        # every NEXT_PUBLIC_* value fell back to the literal
+        # https://api.ebadgeid.com hardcoded in frontend_super_admin's own
+        # source (now src/lib/api.js's fallback default), meaning a local
+        # staging build of this image silently talked to real production
+        # instead of this stack's own api service. Same host-port reasoning
+        # as the `app` service above (localhost:5050, not the internal
+        # docker-network :5000 -- this is inlined into the browser bundle).
+        NEXT_PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:?Set PUBLIC_API_BASE_URL in .env}/api
+        NEXT_PUBLIC_STORAGE_API_URL: ${PUBLIC_STORAGE_BASE_URL:?Set PUBLIC_STORAGE_BASE_URL in .env}/api/uploads
+        NEXT_PUBLIC_SUPER_ADMIN_URL: ${PUBLIC_SUPER_ADMIN_URL:-http://localhost:3003}
+    depends_on:
+      api:
+        condition: service_healthy
+    ports: ["3003:3000"]
+
+  helpdesk:
+    build:
+      context: ./helpdesk_frontend
+      args:
+        # CRIT-02 fix: see the app service's identical comment above -- same
+        # ${VAR:-default} treatment for every NEXT_PUBLIC_* build arg here.
+        NEXT_PUBLIC_HELPDESK_API_URL: ${PUBLIC_HELPDESK_API_BASE_URL:?Set PUBLIC_HELPDESK_API_BASE_URL in .env}/api
+        # 5050, not 5000 -- same host-port mapping reason as the app
+        # service's NEXT_PUBLIC_API_BASE_URL above (macOS ControlCenter/
+        # AirPlay owns 5000). This was still wrong (pointed at the
+        # unreachable 5000) until this merge -- a browser calling this
+        # helpdesk build's core-API integration would have silently failed
+        # exactly like the app service's pre-fix bug did.
+        NEXT_PUBLIC_CORE_API_URL: ${PUBLIC_API_BASE_URL:?Set PUBLIC_API_BASE_URL in .env}
+        NEXT_PUBLIC_HELPDESK_WS_URL: ${PUBLIC_HELPDESK_WS_URL:?Set PUBLIC_HELPDESK_WS_URL in .env}
+        NEXT_PUBLIC_UPLOAD_BASE_URL: ${PUBLIC_STORAGE_BASE_URL:?Set PUBLIC_STORAGE_BASE_URL in .env}
+        # Must match a real organization_code in the Organizations
+        # collection (and, for a single-org local setup, help_backend/.env's
+        # DEFAULT_ORG_CODE) -- the chat widget and public FAQ/article pages
+        # send this on every request and get a 400 from help_backend if it
+        # doesn't resolve to a real organization. See
+        # help_backend/middleware/publicOrganization.js.
+        NEXT_PUBLIC_ORGANIZATION_CODE: local-dev-org
+    depends_on:
+      help-api:
+        condition: service_healthy
+      storage:
+        condition: service_healthy
+    ports: ["3001:3001"]
+
+  contracts:
+    build:
+      context: ./contract
+      args:
+        # 5050, not 5000 -- same host-port mapping reason as the app
+        # service's build arg above. Shares the NEXT_PUBLIC_API_BASE_URL
+        # override with the app service on purpose -- both frontends talk
+        # to the same real backend API, so a production deployment sets
+        # this once and both pick it up.
+        NEXT_PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:?Set PUBLIC_API_BASE_URL in .env}/api
+        # Deliberately its OWN variable (CONTRACTS_UPLOAD_BASE_URL), not
+        # NEXT_PUBLIC_UPLOAD_BASE_URL like app/helpdesk above -- this one
+        # already carries a "/api" suffix those two don't (a pre-existing
+        # difference between this app's and the others' upload-URL
+        # convention, unrelated to this fix). Sharing one override variable
+        # across all three would have silently applied the wrong shape to
+        # whichever app didn't match in a real deployment.
+        NEXT_PUBLIC_UPLOAD_BASE_URL: ${PUBLIC_STORAGE_BASE_URL:?Set PUBLIC_STORAGE_BASE_URL in .env}/api
+    depends_on:
+      api:
+        condition: service_healthy
+      storage:
+        condition: service_healthy
+    ports: ["3002:3002"]
+
+volumes:
+  mongo_data:
+  uploads_data:
+  backups_data:
+  private_contracts_data:

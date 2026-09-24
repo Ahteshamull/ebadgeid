@@ -1,0 +1,13 @@
+node_modules
+.env
+.env.*
+!.env.example
+uploads
+private-contracts
+backups
+tests
+coverage
+*.log
+__pycache__
+*.pyc
+.DS_Store

@@ -1,0 +1,34 @@
+# Isolated local E2E validation overlay. It deliberately uses host ports that
+# differ from application defaults, so it never attaches to, replaces, or
+# deletes a production service, volume, network, or uploaded asset.
+services:
+  api:
+    ports: !override ["25050:5000"]
+    environment:
+      ALLOWED_ORIGINS: http://localhost:23000,http://localhost:23001,http://localhost:23002,http://localhost:23003
+
+  storage:
+    ports: !override ["29000:9000"]
+    # The frontends upload logos, signatures and contract files STRAIGHT to
+    # the storage microservice (UPLOAD_BASE_URL in frontend/src/lib/api.js),
+    # not through the API -- so storage needs the same browser origins the
+    # API was given. Overriding them only for `api` left storage answering
+    # with the default :3000 origins, and every logo/signature upload in this
+    # stack failed with a CORS error the UI surfaced as "Failed to fetch".
+    environment:
+      ALLOWED_ORIGINS: http://localhost:23000,http://localhost:23001,http://localhost:23002,http://localhost:23003
+
+  help-api:
+    ports: !override ["28000:8000"]
+
+  app:
+    ports: !override ["23000:3000"]
+
+  super-admin:
+    ports: !override ["23003:3000"]
+
+  helpdesk:
+    ports: !override ["23001:3001"]
+
+  contracts:
+    ports: !override ["23002:3002"]

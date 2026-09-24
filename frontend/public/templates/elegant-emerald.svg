@@ -1,0 +1,20 @@
+<svg viewBox="0 0 900 636" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="emeraldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0d6b4f"/>
+      <stop offset="50%" stop-color="#3fa980"/>
+      <stop offset="100%" stop-color="#0d6b4f"/>
+    </linearGradient>
+  </defs>
+  <rect width="900" height="636" fill="#f4faf7"/>
+  <rect x="18" y="18" width="864" height="600" fill="none" stroke="url(#emeraldGrad)" stroke-width="6"/>
+  <rect x="34" y="34" width="832" height="568" fill="none" stroke="#0d6b4f" stroke-width="1.5"/>
+  <circle cx="450" cy="120" r="26" fill="none" stroke="#0d6b4f" stroke-width="2"/>
+  <circle cx="450" cy="120" r="18" fill="#3fa980" opacity="0.5"/>
+  <line x1="220" y1="165" x2="680" y2="165" stroke="#0d6b4f" stroke-width="1"/>
+  <line x1="260" y1="470" x2="640" y2="470" stroke="#0d6b4f" stroke-width="1"/>
+  <path d="M34 34 L74 34 L34 74 Z" fill="#0d6b4f" opacity="0.3"/>
+  <path d="M866 34 L826 34 L866 74 Z" fill="#0d6b4f" opacity="0.3"/>
+  <path d="M34 602 L74 602 L34 562 Z" fill="#0d6b4f" opacity="0.3"/>
+  <path d="M866 602 L826 602 L866 562 Z" fill="#0d6b4f" opacity="0.3"/>
+</svg>

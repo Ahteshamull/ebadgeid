@@ -1,0 +1,13 @@
+node_modules/
+.env
+.env.local
+*.log
+logs/
+sessions/
+.DS_Store
+uploads/*
+!uploads/.gitkeep
+private-contracts/*
+!private-contracts/.gitkeep
+backups/*
+!backups/.gitkeep

@@ -1,0 +1,2154 @@
+openapi: 3.0.3
+info:
+  title: eBadge ID API
+  description: >
+    API pública del backend principal de eBadge ID. Cubre la superficie
+    completa expuesta bajo `/api` por el backend principal: autenticación
+    (local y SSO/SAML), organizaciones, usuarios, credenciales, plantillas
+    de diseño, contratos digitales, metas/tareas/puntajes, notificaciones,
+    API keys, invitaciones, activos de organización, brand kit, uploads,
+    integraciones LMS, anclaje blockchain y los tres tableros de
+    analítica/desempeño.
+
+    Cerrado como parte del hallazgo H-15 de la auditoría técnica integral
+    (2026-08): antes solo documentaba el subconjunto pensado para
+    integración externa (credenciales/plantillas/auth). Cada endpoint de
+    abajo se extrajo leyendo directamente su archivo de rutas y su
+    controlador real — método, parámetros, autenticación, cuerpo de
+    petición y códigos de respuesta reflejan el código tal como está, no
+    un diseño aspiracional. Las mesa de ayuda (`help_backend`) es un
+    servicio separado, con su propia base URL, y no está cubierta aquí.
+  version: "1.1"
+servers:
+  - url: https://api.ebadgeid.com/api
+    description: Producción
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        Token de sesión de usuario (POST /auth/login), enviado como
+        `Authorization: Bearer <token>` o, alternativamente, como la cookie
+        httpOnly `ebadge_token` que el propio login también setea.
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: >
+        Clave de integración por organización (ver POST /keys/{organization_code}).
+        Alternativa a bearerAuth para llamadas programáticas — no requiere
+        una sesión de usuario humano. Sujeta a su propio límite de
+        requests/minuto (requests_allowed_per_minute).
+  parameters:
+    limitParam:
+      name: limit
+      in: query
+      schema: { type: integer, default: 200, maximum: 500 }
+      description: Máximo de resultados. Se recorta a 500 aunque se pida más.
+    skipParam:
+      name: skip
+      in: query
+      schema: { type: integer, default: 0 }
+  schemas:
+    Error:
+      type: object
+      properties:
+        message: { type: string }
+        error: { type: string, description: "Algunos controladores usan `error` en vez de `message` para el mismo propósito -- ambos son texto plano para mostrar o loguear, nunca un código machine-readable." }
+        details: { type: string }
+
+    Organization:
+      type: object
+      properties:
+        _id: { type: string }
+        organization_code: { type: string, example: "ORG-A1B2C3D4" }
+        name: { type: string }
+        city: { type: string }
+        state: { type: string }
+        country: { type: string }
+        email: { type: string, format: email }
+        phone: { type: string }
+        status: { type: string, enum: [ACTIVE, TRIAL, DELETED] }
+        deleted_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: >
+            Set cuando status es DELETED (hallazgo H-22: DELETE
+            /organizations/{id} es un borrado lógico, no físico -- la
+            organización y todos sus datos se conservan para
+            auditoría/retención; una purga permanente controlada es una
+            decisión separada, deliberadamente no implementada).
+        plan: { type: string, enum: [Free, Basic, Premium, Enterprise] }
+        users: { type: integer }
+        logo: { type: string }
+        signature: { type: string }
+        require_bulk_approval:
+          type: boolean
+          description: Si es true, POST /credentials/bulk-issue queda pendiente de aprobación en vez de emitir de inmediato.
+
+    User:
+      type: object
+      properties:
+        _id: { type: string }
+        username: { type: string, description: "Único globalmente, normalmente el email." }
+        organization_code: { type: string }
+        first_name: { type: string }
+        last_name: { type: string }
+        designation: { type: string }
+        city: { type: string }
+        state: { type: string }
+        country: { type: string }
+        email: { type: string, format: email }
+        phone: { type: string }
+        status: { type: string, example: "Active | pending_activation" }
+        profile_picture_url: { type: string }
+
+    Goal:
+      type: object
+      properties:
+        _id: { type: string }
+        organization_code: { type: string }
+        goal_code: { type: string, example: "GOAL-M5C9A2-1b2c3d" }
+        name: { type: string, maxLength: 200 }
+        total_score: { type: number }
+        qualifying_score: { type: number }
+        start_date: { type: string }
+        end_date: { type: string }
+
+    Completion:
+      type: object
+      properties:
+        _id: { type: string }
+        username: { type: string }
+        organization_code: { type: string }
+        goal_code: { type: string }
+        message: { type: string, maxLength: 5000 }
+        status: { type: string, enum: [under_review, approved, rejected] }
+
+    Score:
+      type: object
+      properties:
+        _id: { type: string }
+        organization_code: { type: string }
+        goal_code: { type: string }
+        username: { type: string }
+        score: { type: number, minimum: 0 }
+
+    ApiKey:
+      type: object
+      properties:
+        _id: { type: string }
+        organization_code: { type: string }
+        key_prefix: { type: string, description: "Primeros 8 caracteres de la clave -- para identificarla en UI sin exponerla completa." }
+        last_four: { type: string }
+        api_key:
+          type: string
+          description: >
+            Solo presente UNA VEZ, en la respuesta de creación (POST
+            /keys/{organization_code}). Nunca se persiste en claro (se
+            guarda como hash SHA-256) ni se vuelve a devolver después.
+        status: { type: string, enum: [Active, Expired, Revoked] }
+        valid_for: { type: integer, description: "Días de validez desde la creación." }
+        requests_allowed_per_minute: { type: integer, default: 120 }
+        last_used_at: { type: string, format: date-time, nullable: true }
+
+    Notification:
+      type: object
+      properties:
+        id: { type: string }
+        type: { type: string, example: general }
+        title: { type: string }
+        message: { type: string }
+        timestamp: { type: string, format: date-time }
+        read: { type: boolean }
+        user:
+          type: object
+          properties:
+            name: { type: string }
+            avatar: { type: string, nullable: true }
+            initials: { type: string }
+
+    Invitation:
+      type: object
+      properties:
+        invitation_code: { type: string, description: "Payload cifrado (email:organization_code:código de 6 dígitos), no un ID de base de datos." }
+        status: { type: string, enum: [Active, Expired] }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+
+    ContractParty:
+      type: object
+      properties:
+        party_name: { type: string, maxLength: 200 }
+        party_side: { type: string, example: "buyer | seller | partner | any employee of organization" }
+        party_role: { type: string, maxLength: 100 }
+        party_email: { type: string, format: email }
+        contract_permissions:
+          type: object
+          properties:
+            view: { type: boolean }
+            write: { type: boolean }
+            update: { type: boolean }
+            add_discussion: { type: boolean }
+            add_timeline_event: { type: boolean }
+        accepted: { type: boolean }
+        status: { type: string, enum: [invited, accepted, declined] }
+        signed: { type: boolean }
+        signed_at: { type: string, format: date-time, nullable: true }
+
+    DigitalContract:
+      type: object
+      properties:
+        contract_code: { type: string, description: "Único globalmente." }
+        contract_title: { type: string, maxLength: 200 }
+        contract_issue_date: { type: string }
+        contract_start_date: { type: string }
+        contract_end_date: { type: string }
+        contract_attachments: { type: array, items: { type: string } }
+        contract_status: { type: string, enum: [active, in_discussion, on_hold, terminated, disputed] }
+        contract_content_url: { type: string, maxLength: 2048 }
+        contract_parties: { type: array, items: { $ref: '#/components/schemas/ContractParty' } }
+        contract_security_hashes: { type: string }
+        organization_code: { type: string }
+        creator_username: { type: string }
+
+    Design:
+      type: object
+      description: >
+        Estructura simplificada -- una plantilla también puede incluir
+        text_attributes, shapes, image_elements y qr_code, cada uno con su
+        propio esquema de posición/estilo (ver models/designSchema.js);
+        aquí solo se listan los campos de nivel superior relevantes para
+        el ciclo de vida del endpoint.
+      properties:
+        design_code: { type: string }
+        organization_code: { type: string }
+        credential_title: { type: string }
+        main_template_url: { type: string, format: uri }
+        template_url: { type: string, format: uri }
+        status: { type: string, enum: [draft, in_review, approved, rejected, published, archived] }
+        current_version: { type: integer }
+
+    Credential:
+      type: object
+      properties:
+        credential_code:
+          type: string
+          example: CRED-A1B2C3D4E5F6
+        credential_title:
+          type: string
+        credential_issue_date:
+          type: string
+          format: date
+        credential_expiry_date:
+          type: string
+          format: date
+        credential_pic_url:
+          type: string
+          format: uri
+        credential_blockchain_hashes:
+          type: string
+          description: >
+            Hash de integridad SHA-256, reproducible a partir de los campos
+            persistidos del propio registro — no es un registro en una
+            blockchain (ver AUDIT_FIXES.md). Se recalcula y compara en cada
+            verificación.
+        achiever_username:
+          type: string
+        organization_code:
+          type: string
+        credential_status:
+          type: string
+          enum: [Issued, Claimed, Expired, Revoked]
+        integrity_valid:
+          type: boolean
+          description: >
+            Solo presente en la respuesta de verificación pública. `false`
+            significa que el hash recalculado no coincide con el guardado —
+            el registro pudo haber sido alterado después de emitido.
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ============================== AUTH ==============================
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Iniciar sesión
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string, format: password }
+      responses:
+        '200':
+          description: >
+            Sesión iniciada. El token se devuelve en el body Y se setea como
+            cookie httpOnly (`ebadge_token`) — ver AUDIT_FIXES.md.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  username: { type: string }
+                  role: { type: string, enum: [admin, user, platform_admin] }
+                  organization_code: { type: string }
+        '400':
+          description: >
+            Credenciales inválidas, cuenta pendiente de activación, o la
+            organización del usuario fue eliminada (H-22) -- las tres
+            devuelven el mismo mensaje genérico para no filtrar cuál es el
+            caso real.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Cerrar sesión (limpia la cookie httpOnly del lado del servidor)
+      security: []
+      responses:
+        '200': { description: Sesión cerrada }
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Crear credenciales de acceso para un perfil ya existente (legacy)
+      description: >
+        Requiere que el perfil (Users) ya exista bajo la organización del
+        admin autenticado. El flujo normal para altas nuevas es POST
+        /users/self-signup (invitación) o POST /organizations/self-signup.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string, format: password, minLength: 12 }
+      responses:
+        '201': { description: Usuario registrado }
+        '400': { description: "Faltan campos, contraseña muy corta, o el usuario ya existe" }
+        '403': { description: Requiere rol admin }
+        '404': { description: No existe un perfil (Users) para ese username en esta organización }
+
+  /auth/activate:
+    post:
+      tags: [Auth]
+      summary: Activar una cuenta con el token enviado por email y fijar la contraseña
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, token, password, confirmPassword]
+              properties:
+                username: { type: string }
+                token: { type: string, minLength: 32 }
+                password: { type: string, format: password, minLength: 12 }
+                confirmPassword: { type: string, format: password }
+      responses:
+        '200': { description: Cuenta activada }
+        '400': { description: "Enlace inválido/expirado, o las contraseñas no coinciden" }
+
+  /auth/resend-activation:
+    post:
+      tags: [Auth]
+      summary: Reenviar el enlace de activación
+      description: Siempre responde 202 con un mensaje genérico, exista o no la cuenta, para no filtrar qué emails están registrados.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username]
+              properties: { username: { type: string, format: email } }
+      responses:
+        '202': { description: "Respuesta genérica (siempre, sin importar el resultado real)" }
+
+  /auth/check-username:
+    post:
+      tags: [Auth]
+      summary: Verificar si un username está disponible
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [username], properties: { username: { type: string } } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { available: { type: boolean }, message: { type: string } } }
+        '400': { description: username faltante }
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Datos del usuario autenticado (rol + perfil completo)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  authenticated: { type: boolean }
+                  username: { type: string }
+                  role: { type: string }
+                  organization_code: { type: string }
+                  profile: { $ref: '#/components/schemas/User' }
+        '401': { description: Token faltante }
+        '404': { description: Usuario o perfil no encontrado }
+
+  # ============================== SAML SSO ==============================
+  /auth/saml/{organization_code}/metadata:
+    get:
+      tags: [SSO/SAML]
+      summary: Metadata XML del Service Provider para esta organización
+      security: []
+      parameters: [{ name: organization_code, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: "XML de metadata SAML", content: { application/xml: { schema: { type: string } } } }
+        '500': { description: Organización sin configuración SAML }
+
+  /auth/saml/{organization_code}/login:
+    get:
+      tags: [SSO/SAML]
+      summary: Inicia el login SSO (redirect 302 al IdP)
+      security: []
+      parameters: [{ name: organization_code, in: path, required: true, schema: { type: string } }]
+      responses:
+        '302': { description: Redirección al Identity Provider }
+        '429': { description: "Límite de intentos SSO excedido para esta organización (SEC-AUDIT-4)" }
+
+  /auth/saml/{organization_code}/acs:
+    post:
+      tags: [SSO/SAML]
+      summary: Assertion Consumer Service -- el IdP redirige aquí con la respuesta SAML
+      security: []
+      parameters: [{ name: organization_code, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema: { type: object, properties: { SAMLResponse: { type: string } } }
+      responses:
+        '302': { description: "Sesión creada (cookie ebadge_token) y redirect a la app" }
+        '400': { description: "Assertion inválida, expirada, o ya usada (protección de replay vía Redis)" }
+        '429': { description: Límite de intentos SSO excedido }
+
+  /auth/saml/config:
+    put:
+      tags: [SSO/SAML]
+      summary: Configurar el IdP de la propia organización
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [idp_entity_id, idp_sso_url, idp_certificate]
+              properties:
+                idp_entity_id: { type: string }
+                idp_sso_url: { type: string, format: uri }
+                idp_certificate: { type: string, description: "Certificado público de firma del IdP (PEM), no un secreto." }
+                enabled: { type: boolean, default: true }
+      responses:
+        '200': { description: Configuración guardada }
+        '400': { description: Faltan campos requeridos }
+        '403': { description: Requiere rol admin }
+
+  # ============================== USERS ==============================
+  /users/self-signup:
+    post:
+      tags: [Users]
+      summary: Autoregistro de un invitado usando su código de invitación
+      security: []
+      parameters:
+        - name: X-Invite-Code
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password, confirmPassword, first_name, last_name, designation, city, state, country, phone]
+              properties:
+                username: { type: string, pattern: '^[A-Za-z0-9._-]{3,64}$' }
+                password: { type: string, format: password, minLength: 12 }
+                confirmPassword: { type: string, format: password }
+                first_name: { type: string }
+                last_name: { type: string }
+                designation: { type: string }
+                city: { type: string }
+                state: { type: string }
+                country: { type: string }
+                phone: { type: string }
+                profile_picture_url: { type: string, format: uri, description: "Debe apuntar a un archivo ya subido a este mismo storage administrado." }
+      responses:
+        '201': { description: Usuario creado, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '400': { description: "Código de invitación inválido/expirado, o campos inválidos" }
+        '409': { description: Email o username ya registrado }
+
+  /users:
+    post:
+      tags: [Users]
+      summary: Crear un usuario en la propia organización del admin
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { $ref: '#/components/schemas/User' } }
+      responses:
+        '201': { description: Usuario creado, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '400': { description: Validación fallida }
+        '402': { description: Límite de usuarios del plan alcanzado }
+        '403': { description: Requiere rol admin }
+    get:
+      tags: [Users]
+      summary: Listar usuarios de la propia organización
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/limitParam' }, { $ref: '#/components/parameters/skipParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/User' } } } } }
+
+  /users/{id}:
+    get:
+      tags: [Users]
+      summary: Obtener un usuario por _id de Mongo
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '403': { description: "De otra organización" }
+        '404': { description: No encontrado }
+    put:
+      tags: [Users]
+      summary: Actualizar un usuario (el propio, o cualquiera de la org si sos admin)
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              description: "organization_code nunca es aceptado; status solo lo puede cambiar un admin."
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '400': { description: Validación fallida }
+        '403': { description: "De otra organización, o intentando editar el perfil de otra persona sin ser admin" }
+        '404': { description: No encontrado }
+    delete:
+      tags: [Users]
+      summary: Eliminar un usuario
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Eliminado }
+        '403': { description: "Requiere rol admin, o es de otra organización" }
+        '404': { description: No encontrado }
+
+  /users/org/{organization_code}:
+    get:
+      tags: [Users]
+      summary: Listar usuarios por código de organización
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: organization_code, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/User' } } } } }
+        '400': { description: organization_code faltante }
+        '403': { description: "De otra organización (chequeado tanto en la ruta como en el controlador -- hallazgo H-21)" }
+        '404': { description: Sin usuarios para ese código }
+
+  /users/username/{username}:
+    get:
+      tags: [Users]
+      summary: Obtener un usuario por username
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: username, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '403': { description: De otra organización }
+        '404': { description: No encontrado }
+
+  # ============================== ORGANIZATIONS ==============================
+  /organizations/code/{organization_code}:
+    get:
+      tags: [Organizations]
+      summary: Perfil público de una organización (páginas de marca/verificación)
+      security: []
+      parameters: [{ name: organization_code, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200':
+          description: Solo campos públicos (organization_code, name, city, state, country, email, phone, logo)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Organization' } } }
+        '404': { description: "No encontrada, o fue eliminada (H-22)" }
+
+  /organizations/self-signup:
+    post:
+      tags: [Organizations]
+      summary: Alta de organización por autoservicio (gratis o pago vía Tilopay)
+      security: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                organization: { type: object }
+                plan_name: { type: string }
+                admin: { type: object }
+                billing:
+                  type: object
+                  description: "Requerido solo para un plan pago -- address, zip, telephone."
+      responses:
+        '201': { description: "Plan gratis: organización creada de inmediato" }
+        '200': { description: "Plan pago: devuelve paymentUrl (formulario hospedado de Tilopay)" }
+        '400': { description: Datos de organización/admin/facturación inválidos }
+        '409': { description: Admin duplicado }
+        '503': { description: Tilopay no configurado en este deployment }
+
+  /organizations/self-signup/tilopay-return:
+    get:
+      tags: [Organizations]
+      summary: Callback de retorno de Tilopay tras el pago (redirect del navegador del cliente)
+      description: >
+        No es un webhook firmado -- Tilopay no publica una fórmula de
+        verificación de OrderHash (ver docs/EXTERNAL_INTEGRATIONS.md). La
+        mitigación es que `order` es una referencia aleatoria no
+        adivinable, nunca secuencial.
+      security: []
+      parameters:
+        - { name: code, in: query, schema: { type: string }, description: "1 = pago aprobado" }
+        - { name: order, in: query, schema: { type: string } }
+      responses:
+        '302': { description: "Siempre redirige a una página real del frontend. code=1 nunca aprovisiona por sí solo -- mueve el registro a awaiting_verification y redirige con signup=payment_verification_pending; ver /organizations/self-signup/pending abajo para completar el alta." }
+
+  /organizations/self-signup/pending:
+    get:
+      tags: [Organizations]
+      summary: Cola de altas de pago pendientes de verificación manual
+      description: >
+        Un retorno de Tilopay nunca aprovisiona por sí solo (ver
+        /organizations/self-signup/tilopay-return) -- esta es la cola que un
+        platform_admin revisa contra el panel de Tilopay antes de aprobar o
+        rechazar.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, default: awaiting_verification, enum: [pending, awaiting_verification, provisioning, completed, expired, failed] }
+      responses:
+        '200': { description: OK }
+        '401': { description: Sin sesión }
+        '403': { description: Requiere rol platform_admin }
+
+  /organizations/self-signup/pending/{id}/approve:
+    post:
+      tags: [Organizations]
+      summary: Aprobar un alta de pago tras confirmar la transacción en Tilopay
+      description: >
+        Provisiona la organización solo si verified_amount_cents/verified_currency
+        coinciden exactamente con lo cotizado al cliente al iniciar el alta;
+        de lo contrario devuelve 409 y el registro vuelve a
+        awaiting_verification sin provisionar nada. La reclamación es
+        atómica -- dos aprobaciones simultáneas nunca provisionan dos veces.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string }, description: "_id del PendingOrgSignup" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [evidence_reference, verified_amount_cents, verified_currency]
+              properties:
+                evidence_reference: { type: string, description: "Referencia/ID de la transacción real en el panel de Tilopay" }
+                verified_amount_cents: { type: integer }
+                verified_currency: { type: string }
+                note: { type: string }
+      responses:
+        '200': { description: "Organización provisionada" }
+        '400': { description: Faltan campos requeridos }
+        '403': { description: Requiere rol platform_admin }
+        '404': { description: "No existe, o no está en estado awaiting_verification" }
+        '409': { description: "El monto/moneda verificados no coinciden con lo cotizado -- no se provisiona" }
+
+  /organizations/self-signup/pending/{id}/reject:
+    post:
+      tags: [Organizations]
+      summary: Rechazar un alta de pago (no se encontró la transacción, monto no coincide, etc.)
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string }, description: "_id del PendingOrgSignup" }]
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { note: { type: string } } }
+      responses:
+        '200': { description: "Marcado como failed, nunca se provisiona" }
+        '403': { description: Requiere rol platform_admin }
+        '404': { description: "No existe, o no está en estado awaiting_verification" }
+
+  /organizations:
+    post:
+      tags: [Organizations]
+      summary: Crear una organización (uso administrativo directo, no autoservicio)
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, admin_email, admin_phone, admin_first_name, admin_last_name, city, state, country]
+              properties:
+                name: { type: string }
+                admin_email: { type: string, format: email }
+                admin_phone: { type: string }
+                admin_first_name: { type: string }
+                admin_last_name: { type: string }
+                city: { type: string }
+                state: { type: string }
+                country: { type: string }
+      responses:
+        '201': { description: "Creada, con email de activación para el admin" }
+        '400': { description: Campos inválidos }
+        '403': { description: Requiere rol platform_admin }
+        '409': { description: Ya existe un admin con ese email }
+    get:
+      tags: [Organizations]
+      summary: Listar organizaciones
+      description: >
+        Un platform_admin ve todas (excluyendo las eliminadas -- H-22 --
+        salvo que pase `include_deleted=true`); cualquier otro rol admin
+        solo ve la propia.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/limitParam' }
+        - { $ref: '#/components/parameters/skipParam' }
+        - name: include_deleted
+          in: query
+          schema: { type: boolean, default: false }
+          description: Solo tiene efecto para platform_admin (H-22).
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Organization' } } } } }
+
+  /organizations/{id}:
+    get:
+      tags: [Organizations]
+      summary: Obtener una organización por _id
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Organization' } } } }
+        '403': { description: De otra organización (a menos que seas platform_admin) }
+        '404': { description: No encontrada }
+    put:
+      tags: [Organizations]
+      summary: Actualizar datos de una organización
+      description: "plan, organization_code y status quedan explícitamente fuera de este PATCH genérico -- ver PUT /organizations/{organization_code}/plan y DELETE para esos cambios."
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Organization' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Organization' } } } }
+        '400': { description: Validación fallida }
+        '403': { description: De otra organización }
+        '404': { description: No encontrada }
+    delete:
+      tags: [Organizations]
+      summary: Eliminar una organización (borrado lógico)
+      description: >
+        Hallazgo H-22: NO es un borrado físico. Marca `status: DELETED` y
+        `deleted_at`, sin cascada -- toda la data de la organización
+        (usuarios, credenciales, diseños, contratos) se conserva intacta
+        para auditoría/retención. Una purga permanente controlada, tras
+        una ventana de retención, es una decisión separada, no
+        implementada aquí. Bloquea también el login de todos sus usuarios.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: "Marcada como eliminada", content: { application/json: { schema: { type: object, properties: { message: { type: string }, deleted_at: { type: string, format: date-time } } } } } }
+        '403': { description: Requiere rol platform_admin }
+        '404': { description: No encontrada }
+        '409': { description: Ya estaba eliminada }
+
+  /organizations/{organization_code}/plan:
+    put:
+      tags: [Organizations]
+      summary: Cambiar el plan de una organización
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: organization_code, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { type: object, required: [plan], properties: { plan: { type: string, enum: [Free, Basic, Premium, Enterprise] } } } }
+      responses:
+        '200': { description: Plan cambiado }
+        '400': { description: Plan desconocido }
+        '403': { description: Requiere rol platform_admin }
+        '404': { description: Organización no encontrada }
+
+  /organizations/{organization_code}/usage:
+    get:
+      tags: [Organizations]
+      summary: Uso actual vs límites del plan
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: organization_code, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  plan: { type: string }
+                  users: { type: object, properties: { used: { type: integer }, limit: { type: integer } } }
+                  credentials_this_month: { type: object, properties: { used: { type: integer }, limit: { type: integer } } }
+                  api_calls_this_month: { type: object, properties: { used: { type: integer }, limit: { type: integer } } }
+        '403': { description: De otra organización }
+        '404': { description: Organización o plan no encontrado }
+
+  /start-free-trial:
+    post:
+      tags: [Organizations]
+      summary: Iniciar una prueba gratuita (crea organización + admin de una vez)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, city, state, country, email, phone]
+              properties:
+                name: { type: string }
+                city: { type: string }
+                state: { type: string }
+                country: { type: string }
+                email: { type: string, format: email }
+                phone: { type: string }
+      responses:
+        '201': { description: "Trial creado, email de activación enviado" }
+        '400': { description: Campos inválidos }
+        '409': { description: Ya existe una cuenta con ese email }
+        '429': { description: "Límite de 5 intentos/hora por IP excedido" }
+
+  # ============================== API KEYS ==============================
+  /keys:
+    get:
+      tags: [API Keys]
+      summary: Listar todas las API keys de la propia organización
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/limitParam' }, { $ref: '#/components/parameters/skipParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ApiKey' } } } } }
+
+  /keys/{id}:
+    post:
+      tags: [API Keys]
+      summary: Generar una nueva API key para una organización
+      description: >
+        `{id}` aquí es en realidad el organization_code de destino, no el
+        _id de una API key -- así está definida la ruta real
+        (POST /keys/:organization_code), a diferencia de las demás
+        operaciones sobre esta misma plantilla de ruta.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string }, description: "organization_code de la organización para la que se genera la clave." }]
+      responses:
+        '201': { description: "Clave generada -- el campo api_key en texto plano solo aparece en esta respuesta, nunca de nuevo", content: { application/json: { schema: { $ref: '#/components/schemas/ApiKey' } } } }
+        '403': { description: "Requiere rol admin, o es de otra organización" }
+    get:
+      tags: [API Keys]
+      summary: Obtener una API key por _id
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ApiKey' } } } }
+        '404': { description: No encontrada }
+    put:
+      tags: [API Keys]
+      summary: Actualizar status/valid_for/requests_allowed_per_minute
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { type: string, enum: [Active, Expired, Revoked] }
+                valid_for: { type: integer }
+                requests_allowed_per_minute: { type: integer }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ApiKey' } } } }
+        '400': { description: Validación fallida }
+        '404': { description: No encontrada }
+    delete:
+      tags: [API Keys]
+      summary: Eliminar una API key
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Eliminada }
+        '404': { description: No encontrada }
+
+  /keys/organization/{organization_code}:
+    get:
+      tags: [API Keys]
+      summary: Listar tokens de una organización específica
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: organization_code, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ApiKey' } } } } }
+        '403': { description: De otra organización }
+
+  /keys/revoke/{token_id}:
+    patch:
+      tags: [API Keys]
+      summary: Revocar una API key
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: token_id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Revocada }
+        '404': { description: No encontrada }
+
+  # ============================== CREDENTIALS ==============================
+  /credentials/by-code/{credential_code}:
+    get:
+      tags: [Credentials]
+      summary: Verificar una credencial (público — sin autenticación)
+      description: >
+        El endpoint central del producto. Cualquiera con el código puede
+        confirmar si una credencial es genuina. Recalcula el hash de
+        integridad en cada llamada y lo compara contra el guardado —
+        `integrity_valid: false` significa alteración posterior a la
+        emisión.
+      security: []
+      parameters:
+        - name: credential_code
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Credential' }
+        '404': { description: Credencial no encontrada }
+
+  /credentials/by-code/{credential_code}/openbadge:
+    get:
+      tags: [Credentials]
+      summary: Exportar la misma credencial pública en formato Open Badges 3.0
+      security: []
+      parameters: [{ name: credential_code, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: "Documento Open Badges 3.0 (JSON-LD)" }
+        '404': { description: Credencial no encontrada }
+
+  /credentials/reserve-code:
+    post:
+      summary: Reservar un credential_code único antes de generar el certificado
+      tags: [Credentials]
+      description: >
+        Paso 1 del flujo de emisión — reserva el código real antes de generar
+        la imagen del certificado, para que el QR pueda apuntar al lugar
+        correcto desde el principio. Ver AUDIT_FIXES.md, "Diseño de
+        certificados".
+      security: [{ bearerAuth: [] }, { apiKeyAuth: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  credential_code: { type: string }
+        '401': { description: No autenticado }
+        '402': { description: Límite mensual de credenciales del plan alcanzado }
+
+  /credentials/generate-certificate:
+    post:
+      tags: [Credentials]
+      summary: Generar la imagen del certificado a partir de una plantilla
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [design_code, achiever_username, credential_code]
+              properties:
+                design_code: { type: string }
+                achiever_username: { type: string }
+                credential_code: { type: string, description: "Debe haberse reservado antes con POST /credentials/reserve-code." }
+                guest_recipient: { type: object }
+                custom_fields: { type: object }
+      responses:
+        '201': { description: "Imagen generada", content: { application/json: { schema: { type: object, properties: { url: { type: string, format: uri } } } } } }
+        '400': { description: Campos faltantes o custom_fields inválidos }
+        '404': { description: Plantilla o destinatario no encontrado }
+        '409': { description: "La plantilla no está publicada" }
+        '429': { description: "Límite de 60 certificados/15min excedido" }
+        '502': { description: Falla el microservicio generador de certificados }
+        '503': { description: "Generador o PUBLIC_APP_URL no configurados" }
+
+  /credentials/create:
+    post:
+      summary: Emitir una credencial
+      tags: [Credentials]
+      description: Paso 2 del flujo — crea la credencial usando el código reservado en el paso 1. Acepta `achiever_username` (usuario real de la organización) o `guest_recipient` (nombre + email, sin cuenta).
+      security: [{ bearerAuth: [] }, { apiKeyAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [credential_pic_url, achiever_username]
+              properties:
+                credential_code: { type: string, description: "El reservado en /credentials/reserve-code. Si se omite, se genera uno nuevo." }
+                credential_pic_url: { type: string, format: uri, description: "Debe resolver a un origen de storage aprobado." }
+                achiever_username: { type: string }
+                credential_title: { type: string }
+                guest_recipient:
+                  type: object
+                  properties:
+                    first_name: { type: string, maxLength: 100 }
+                    last_name: { type: string, maxLength: 100 }
+                    email: { type: string, format: email }
+                    designation: { type: string, maxLength: 100 }
+                    city: { type: string, maxLength: 100 }
+                custom_fields: { type: object }
+      responses:
+        '201':
+          description: Credencial creada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Credential' }
+        '400': { description: "Faltan campos requeridos, URL de imagen no aprobada, o custom_fields inválidos" }
+        '404': { description: Usuario u organización no encontrados }
+        '409': { description: "credential_code ya en uso, o achiever_username de un guest_recipient coincide con una cuenta real" }
+        '402': { description: Límite mensual de credenciales del plan alcanzado }
+
+  /credentials/bulk-issue:
+    post:
+      tags: [Credentials]
+      summary: Encolar la emisión masiva de credenciales
+      description: >
+        Encola el lote en BullMQ/Redis para procesamiento en segundo plano.
+        Si la organización tiene `require_bulk_approval` activado, en vez de
+        encolar de inmediato crea una solicitud pendiente (ver los 3
+        endpoints de abajo).
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                recipients:
+                  type: array
+                  maxItems: 2000
+                  items: { type: object, properties: { achiever_username: { type: string }, guest_recipient: { type: object } } }
+                usernames: { type: array, items: { type: string }, description: "Forma legacy, equivalente a recipients sin guest_recipient." }
+                design_code: { type: string }
+                credential_title: { type: string }
+      responses:
+        '202': { description: "Encolado (o `pending_approval` si la organización requiere aprobación)" }
+        '400': { description: "recipients vacío, más de 2000 destinatarios, o falta achiever_username en alguno" }
+        '403': { description: Requiere rol admin }
+        '503': { description: "Cola no configurada (REDIS_URL no seteado)" }
+
+  /credentials/bulk-issue/pending:
+    get:
+      tags: [Credentials]
+      summary: Listar solicitudes de emisión masiva pendientes de aprobación
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: OK }
+
+  /credentials/bulk-issue/{pendingId}/approve:
+    post:
+      tags: [Credentials]
+      summary: Aprobar una emisión masiva pendiente (esto es lo que realmente la encola)
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: pendingId, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Aprobada y encolada }
+        '404': { description: Solicitud pendiente no encontrada }
+        '503': { description: Cola no configurada }
+
+  /credentials/bulk-issue/{pendingId}/reject:
+    post:
+      tags: [Credentials]
+      summary: Rechazar una emisión masiva pendiente (queda como registro, nunca se encola)
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: pendingId, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content: { application/json: { schema: { type: object, properties: { reason: { type: string, maxLength: 500 } } } } }
+      responses:
+        '200': { description: Rechazada }
+        '404': { description: Solicitud pendiente no encontrada }
+
+  /credentials/bulk-issue/{batchId}:
+    get:
+      tags: [Credentials]
+      summary: Estado de progreso de un lote de emisión masiva
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: batchId, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK }
+        '404': { description: "Lote no encontrado (incluye lotes de otra organización)" }
+        '503': { description: Cola no configurada }
+
+  /credentials/by-organization/{organization_code}:
+    get:
+      tags: [Credentials]
+      summary: Listar credenciales de una organización (paginado)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: organization_code, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/limitParam' }
+        - { $ref: '#/components/parameters/skipParam' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Credential' } }
+                  pagination: { type: object, properties: { total_items: { type: integer } } }
+        '403': { description: De otra organización }
+
+  /credentials/by-user/{username}:
+    get:
+      tags: [Credentials]
+      summary: Credenciales de un usuario (alias también en /by-users/{username})
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: username, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK }
+        '403': { description: "De otra organización, o de otro usuario sin ser admin" }
+        '404': { description: "Usuario no encontrado, o sin credenciales" }
+
+  /credentials/revoke/{credential_code}:
+    put:
+      summary: Revocar una credencial
+      tags: [Credentials]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: credential_code
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Revocada }
+        '400': { description: Ya estaba revocada }
+        '404': { description: No encontrada }
+
+  /credentials/{credential_code}/history:
+    get:
+      summary: Historial de auditoría de una credencial (emitida/reclamada/revocada, quién y cuándo)
+      tags: [Credentials]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: credential_code
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  credential_code: { type: string }
+                  history:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        event: { type: string, enum: [issued, claimed, revoked] }
+                        actor_username: { type: string, nullable: true }
+                        createdAt: { type: string, format: date-time }
+        '403': { description: De otra organización }
+        '404': { description: No encontrada }
+
+  /credentials/claim/{credential_code}:
+    put:
+      tags: [Credentials]
+      summary: Reclamar una credencial propia (Issued -> Claimed)
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: credential_code, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Reclamada }
+        '400': { description: "Ya estaba reclamada, revocada, o expiró" }
+        '404': { description: No encontrada }
+
+  /credentials/portal-visibility/{credential_code}:
+    put:
+      tags: [Credentials]
+      summary: Mostrar/ocultar una credencial propia en el portal público del recipiente
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: credential_code, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [visible], properties: { visible: { type: boolean } } } } }
+      responses:
+        '200': { description: OK }
+        '400': { description: "Falta el campo visible, o la credencial aún no está Claimed" }
+        '404': { description: No encontrada }
+
+  /credentials/analytics/organization/{organization_code}:
+    get:
+      tags: [Credentials]
+      summary: Analítica de credenciales de la propia organización (emisor)
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: organization_code, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK }
+        '403': { description: De otra organización }
+
+  /credentials/portal/{username}:
+    get:
+      tags: [Credentials]
+      summary: Portal público de un recipiente (solo credenciales Claimed y visibles)
+      security: []
+      parameters: [{ name: username, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK }
+        '404': { description: Sin credenciales públicas para este perfil }
+        '429': { description: "Límite de 120 requests/15min excedido" }
+
+  # ============================== DESIGNS ==============================
+  /designs/public/{design_code}:
+    get:
+      tags: [Designs]
+      summary: Preview público de una plantilla (comparte en LinkedIn, etc.)
+      security: []
+      parameters: [{ name: design_code, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK }
+        '404': { description: No encontrada }
+
+  /designs/gallery-templates/materialize:
+    post:
+      tags: [Designs]
+      summary: Materializar una de las 12 plantillas de galería en un PNG real hospedado
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [template_id], properties: { template_id: { type: string } } } } }
+      responses:
+        '201': { description: PNG generado y URL devuelta }
+        '400': { description: template_id inválido }
+        '403': { description: Requiere rol admin }
+
+  /designs:
+    post:
+      summary: Crear una plantilla de certificado
+      tags: [Designs]
+      security: [{ bearerAuth: [] }]
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Design' } } } }
+      responses:
+        '201': { description: Plantilla creada, content: { application/json: { schema: { $ref: '#/components/schemas/Design' } } } }
+        '400': { description: Validación fallida }
+        '403': { description: Requiere rol admin }
+    get:
+      tags: [Designs]
+      summary: Listar plantillas de la propia organización
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Design' } } } } }
+
+  /designs/by-code/{design_code}:
+    get:
+      tags: [Designs]
+      summary: Obtener una plantilla por código
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: design_code, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Design' } } } }
+        '404': { description: No encontrada }
+
+  /designs/{design_code}:
+    put:
+      summary: Editar una plantilla existente
+      tags: [Designs]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: design_code
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: '#/components/schemas/Design' }
+                - type: object
+                  properties: { known_version: { type: integer, description: "Control de versión optimista -- rechaza el guardado si otra edición ya avanzó la versión." } }
+      responses:
+        '200': { description: Actualizada }
+        '403': { description: De otra organización }
+        '404': { description: No encontrada }
+        '409': { description: "known_version desactualizado (edición concurrente)" }
+    delete:
+      summary: Eliminar una plantilla
+      tags: [Designs]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: design_code
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Eliminada }
+        '403': { description: De otra organización }
+        '404': { description: No encontrada }
+
+  /designs/organization/{organization_code}:
+    get:
+      tags: [Designs]
+      summary: Listar plantillas de una organización específica
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: organization_code, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Design' } } } } }
+        '403': { description: De otra organización }
+
+  /designs/{design_code}/versions:
+    get:
+      tags: [Designs]
+      summary: Historial de versiones de una plantilla
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: design_code, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK }, '403': { description: De otra organización } }
+
+  /designs/{design_code}/versions/{version_number}/revert:
+    post:
+      tags: [Designs]
+      summary: Revertir una plantilla a una versión anterior
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: design_code, in: path, required: true, schema: { type: string } }
+        - { name: version_number, in: path, required: true, schema: { type: integer } }
+      responses: { '200': { description: Revertida }, '404': { description: "Plantilla o versión no encontrada" } }
+
+  /designs/{design_code}/comments:
+    get:
+      tags: [Designs]
+      summary: Listar comentarios de una plantilla
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: design_code, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK } }
+    post:
+      tags: [Designs]
+      summary: Agregar un comentario a una plantilla
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: design_code, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties: { text: { type: string }, position: { type: object, properties: { X: { type: number }, Y: { type: number } } } }
+      responses: { '201': { description: Comentario creado } }
+
+  /designs/{design_code}/comments/{commentId}/resolve:
+    patch:
+      tags: [Designs]
+      summary: Marcar un comentario como resuelto
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: design_code, in: path, required: true, schema: { type: string } }
+        - { name: commentId, in: path, required: true, schema: { type: string } }
+      responses: { '200': { description: Resuelto }, '404': { description: No encontrado } }
+
+  /designs/{design_code}/comments/{commentId}:
+    delete:
+      tags: [Designs]
+      summary: Eliminar un comentario
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: design_code, in: path, required: true, schema: { type: string } }
+        - { name: commentId, in: path, required: true, schema: { type: string } }
+      responses: { '200': { description: Eliminado }, '404': { description: No encontrado } }
+
+  /designs/{design_code}/presence:
+    post:
+      tags: [Designs]
+      summary: "Heartbeat de presencia (\"quién está editando esto ahora mismo\")"
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: design_code, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK } }
+    get:
+      tags: [Designs]
+      summary: Ver quién está editando esta plantilla actualmente
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: design_code, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK } }
+
+  /designs/{design_code}/submit-review:
+    post:
+      tags: [Designs]
+      summary: Enviar una plantilla a revisión (draft -> in_review)
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: design_code, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Enviada a revisión }, '409': { description: Estado actual no permite esta transición } }
+
+  /designs/{design_code}/approve:
+    post:
+      tags: [Designs]
+      summary: Aprobar una plantilla en revisión
+      description: "Un admin no puede aprobar su propia solicitud de revisión."
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: design_code, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Aprobada }, '403': { description: "El mismo admin que la envió no puede aprobarla" }, '409': { description: No está en revisión } }
+
+  /designs/{design_code}/reject:
+    post:
+      tags: [Designs]
+      summary: Rechazar una plantilla en revisión
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: design_code, in: path, required: true, schema: { type: string } }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { reason: { type: string } } } } } }
+      responses: { '200': { description: Rechazada }, '409': { description: No está en revisión } }
+
+  /designs/{design_code}/audit-log:
+    get:
+      tags: [Designs]
+      summary: Historial de auditoría de una plantilla (quién publicó/aprobó/rechazó/archivó, y cuándo)
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: design_code, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK } }
+
+  /designs/{design_code}/publish:
+    post:
+      tags: [Designs]
+      summary: Publicar una plantilla aprobada (queda disponible para emitir)
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: design_code, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Publicada }, '409': { description: No está aprobada } }
+
+  /designs/{design_code}/unpublish:
+    post:
+      tags: [Designs]
+      summary: Despublicar una plantilla
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: design_code, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Despublicada } }
+
+  /designs/{design_code}/archive:
+    post:
+      tags: [Designs]
+      summary: Archivar una plantilla
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: design_code, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Archivada } }
+
+  /designs/{design_code}/unarchive:
+    post:
+      tags: [Designs]
+      summary: Desarchivar una plantilla
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: design_code, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Desarchivada } }
+
+  /designs/{design_code}/duplicate:
+    post:
+      tags: [Designs]
+      summary: Duplicar una plantilla (la copia siempre nace en draft, sin importar el estado del original)
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: design_code, in: path, required: true, schema: { type: string } }]
+      responses: { '201': { description: Duplicada }, '404': { description: No encontrada } }
+
+  # ============================== DESIGN SHARING ==============================
+  /design-shares:
+    post:
+      tags: [Design Sharing]
+      summary: Compartir una plantilla propia con otra organización
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [design_code, target_organization_code], properties: { design_code: { type: string }, target_organization_code: { type: string } } }
+      responses:
+        '201': { description: "Compartida (idempotente -- repetir con la misma organización no duplica)" }
+        '400': { description: "Faltan campos, o se intenta compartir con la propia organización" }
+        '403': { description: "La plantilla no es de tu organización" }
+        '404': { description: Plantilla u organización destino no encontrada }
+
+  /design-shares/received:
+    get:
+      tags: [Design Sharing]
+      summary: Plantillas que otras organizaciones compartieron con la mía
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: OK } }
+
+  /design-shares/sent:
+    get:
+      tags: [Design Sharing]
+      summary: Plantillas que mi organización compartió hacia afuera
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: OK } }
+
+  /design-shares/{share_id}:
+    delete:
+      tags: [Design Sharing]
+      summary: Revocar un share saliente propio
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: share_id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Revocado }, '403': { description: "El share no es de tu organización" }, '404': { description: No encontrado } }
+
+  /design-shares/{share_id}/import:
+    post:
+      tags: [Design Sharing]
+      summary: Importar un share recibido como copia propia, editable e independiente
+      description: "La copia siempre nace en draft, sin importar el estado del original -- nunca queda inmediatamente emitible sin revisión propia."
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: share_id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '201': { description: Importada como nueva plantilla propia }
+        '403': { description: No fue compartida con tu organización }
+        '404': { description: "Share no encontrado, o la plantilla origen ya no existe" }
+
+  # ============================== BRAND KIT ==============================
+  /brand-kit:
+    get:
+      tags: [Brand Kit]
+      summary: Obtener el brand kit de la propia organización (con defaults si nunca se guardó uno)
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: OK } }
+    put:
+      tags: [Brand Kit]
+      summary: Guardar/actualizar el brand kit (colores + logo)
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                primary_color: { type: string, pattern: '^#[0-9A-Fa-f]{6}$' }
+                secondary_color: { type: string, pattern: '^#[0-9A-Fa-f]{6}$' }
+                logo_url: { type: string, format: uri, description: "Debe ser una imagen previamente subida a este storage administrado." }
+      responses:
+        '200': { description: Guardado }
+        '400': { description: "Color con formato inválido, o logo_url no administrada" }
+        '403': { description: Requiere rol admin }
+
+  # ============================== ORGANIZATION ASSETS ==============================
+  /assets:
+    post:
+      tags: [Organization Assets]
+      summary: Registrar un archivo ya subido (fuente/imagen) como activo reutilizable de la organización
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [asset_type, name, url, mime_type]
+              properties:
+                asset_type: { type: string, enum: [font, image] }
+                name: { type: string }
+                url: { type: string, format: uri }
+                mime_type: { type: string }
+                original_filename: { type: string }
+      responses:
+        '201': { description: Activo registrado }
+        '400': { description: "Campos faltantes o asset_type inválido" }
+        '403': { description: Requiere rol admin }
+        '409': { description: Ya existe un activo con ese nombre en la organización }
+    get:
+      tags: [Organization Assets]
+      summary: Listar activos de la propia organización, opcionalmente filtrados por tipo
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: asset_type, in: query, schema: { type: string, enum: [font, image] } }]
+      responses: { '200': { description: OK } }
+
+  /assets/{id}:
+    delete:
+      tags: [Organization Assets]
+      summary: Eliminar un activo de la organización
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Eliminado }, '403': { description: De otra organización }, '404': { description: No encontrado } }
+
+  # ============================== UPLOADS ==============================
+  /uploads:
+    post:
+      tags: [Uploads]
+      summary: Subir un archivo (imagen, o un PDF que se convierte a imagen)
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { multipart/form-data: { schema: { type: object, properties: { file: { type: string, format: binary } } } } }
+      responses:
+        '201': { description: "Subido -- devuelve { url }" }
+        '400': { description: Sin archivo }
+        '403': { description: Requiere rol admin }
+        '415': { description: "Tipo de archivo no permitido (verificado por contenido real, no por la extensión declarada)" }
+        '422': { description: "PDF corrupto, protegido con contraseña, o sin páginas" }
+        '429': { description: "Límite de 30 uploads/15min excedido" }
+
+  /uploads/font:
+    post:
+      tags: [Uploads]
+      summary: Subir una fuente tipográfica (TTF/OTF/WOFF/WOFF2)
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { multipart/form-data: { schema: { type: object, properties: { file: { type: string, format: binary } } } } }
+      responses:
+        '201': { description: "Subida -- devuelve { url, mime }" }
+        '400': { description: Sin archivo }
+        '403': { description: Requiere rol admin }
+        '415': { description: Formato no soportado }
+
+  /uploads/generate-image:
+    post:
+      tags: [Uploads]
+      summary: Generar una imagen con IA a partir de un prompt (Pollinations.ai)
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [prompt]
+              properties:
+                prompt: { type: string, maxLength: 500 }
+                width: { type: integer, minimum: 256, maximum: 2048, default: 1024 }
+                height: { type: integer, minimum: 256, maximum: 2048, default: 1024 }
+      responses:
+        '201': { description: "Generada -- devuelve { url }" }
+        '400': { description: prompt faltante o demasiado largo }
+        '403': { description: Requiere rol admin }
+        '502': { description: "Servicio de generación no disponible, o devolvió un archivo inválido/no soportado" }
+
+  # ============================== GOALS ==============================
+  /goals:
+    post:
+      tags: [Goals]
+      summary: Crear una meta
+      security: [{ bearerAuth: [] }]
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Goal' } } } }
+      responses:
+        '201': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Goal' } } } }
+        '400': { description: "Validación fallida (incluye qualifying_score > total_score)" }
+        '403': { description: Requiere rol admin }
+    get:
+      tags: [Goals]
+      summary: Listar metas de la propia organización
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/limitParam' }, { $ref: '#/components/parameters/skipParam' }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Goal' } } } } } }
+
+  /goals/organization/{organization_code}:
+    get:
+      tags: [Goals]
+      summary: Listar metas por código de organización
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: organization_code, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Goal' } } } } }
+        '403': { description: "De otra organización (chequeado tanto en la ruta como en el controlador -- hallazgo H-21)" }
+
+  /goals/{id}:
+    get:
+      tags: [Goals]
+      summary: Obtener una meta por _id
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Goal' } } } }, '403': { description: De otra organización }, '404': { description: No encontrada } }
+    put:
+      tags: [Goals]
+      summary: Actualizar una meta
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Goal' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Goal' } } } }, '400': { description: Validación fallida }, '404': { description: No encontrada } }
+    delete:
+      tags: [Goals]
+      summary: Eliminar una meta
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Eliminada }, '404': { description: No encontrada } }
+
+  # ============================== COMPLETIONS ==============================
+  /completions:
+    post:
+      tags: [Completions]
+      summary: Registrar la finalización de una tarea (queda under_review)
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [message, goal_code], properties: { message: { type: string }, goal_code: { type: string } } } } }
+      responses: { '201': { description: Registrada }, '400': { description: Campos faltantes } }
+    get:
+      tags: [Completions]
+      summary: Listar todas las finalizaciones de la propia organización
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/limitParam' }, { $ref: '#/components/parameters/skipParam' }]
+      responses: { '200': { description: OK }, '403': { description: Requiere rol admin } }
+
+  /completions/org/{organization_code}:
+    get:
+      tags: [Completions]
+      summary: Listar finalizaciones por organización
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: organization_code, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK }, '403': { description: "De otra organización (chequeado tanto en la ruta como en el controlador -- hallazgo H-21)" } }
+
+  /completions/user/{username}:
+    get:
+      tags: [Completions]
+      summary: Listar finalizaciones de un usuario
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: username, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK }, '403': { description: "De otro usuario sin ser admin, o de otra organización" } }
+
+  /completions/{id}/approve:
+    patch:
+      tags: [Completions]
+      summary: Aprobar una finalización (suma el puntaje de la meta, atómico)
+      description: >
+        Transaccional (requiere MongoDB como replica set). Aprobar dos
+        veces la misma finalización es un no-op seguro (hallazgo H-09); dos
+        finalizaciones DISTINTAS del mismo usuario+meta aprobadas en
+        paralelo tampoco pueden duplicar el puntaje (upsert atómico).
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: "Aprobada, puntaje actualizado" }
+        '400': { description: Ya estaba aprobada }
+        '403': { description: Requiere rol admin }
+        '404': { description: "No encontrada (incluye de otra organización)" }
+
+  /completions/{id}/reject:
+    patch:
+      tags: [Completions]
+      summary: Rechazar una finalización
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Rechazada }, '403': { description: Requiere rol admin }, '404': { description: No encontrada } }
+
+  # ============================== SCORES ==============================
+  /scores:
+    post:
+      tags: [Scores]
+      summary: Registrar un puntaje
+      security: [{ bearerAuth: [] }]
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Score' } } } }
+      responses: { '201': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Score' } } } }, '400': { description: Validación fallida }, '403': { description: Requiere rol admin } }
+    get:
+      tags: [Scores]
+      summary: Listar puntajes de la propia organización
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/limitParam' }, { $ref: '#/components/parameters/skipParam' }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Score' } } } } } }
+
+  /scores/{id}:
+    get:
+      tags: [Scores]
+      summary: Obtener un puntaje por _id
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Score' } } } }, '403': { description: De otra organización }, '404': { description: No encontrado } }
+    put:
+      tags: [Scores]
+      summary: Actualizar un puntaje
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Score' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Score' } } } }, '404': { description: No encontrado } }
+    delete:
+      tags: [Scores]
+      summary: Eliminar un puntaje
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Eliminado }, '404': { description: No encontrado } }
+
+  # ============================== NOTIFICATIONS ==============================
+  /notifications/{username}:
+    get:
+      tags: [Notifications]
+      summary: Listar notificaciones propias
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: username, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { total: { type: integer }, notifications: { type: array, items: { $ref: '#/components/schemas/Notification' } } } } } } }
+        '403': { description: "Solo podés ver tus propias notificaciones" }
+        '404': { description: Usuario no encontrado }
+
+  /notifications/read/{id}:
+    patch:
+      tags: [Notifications]
+      summary: Marcar una notificación propia como leída
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Marcada como leída }, '404': { description: No encontrada } }
+
+  /notifications/clear/{username}:
+    delete:
+      tags: [Notifications]
+      summary: Borrar todas las notificaciones propias
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: username, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Borradas }, '403': { description: Solo tus propias notificaciones }, '404': { description: Usuario no encontrado } }
+
+  # ============================== INVITATIONS ==============================
+  /invitation/generate:
+    post:
+      tags: [Invitations]
+      summary: Invitar a una persona a unirse a la organización
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [email], properties: { email: { type: string, format: email }, designation: { type: string } } } } }
+      responses:
+        '201': { description: Invitación creada y enviada por email, content: { application/json: { schema: { $ref: '#/components/schemas/Invitation' } } } }
+        '400': { description: "Email inválido, o ya existe una invitación activa para ese email" }
+        '403': { description: Requiere rol admin }
+
+  /invitation/verify/{encrypted_verification_code}:
+    post:
+      tags: [Invitations]
+      summary: Verificar una invitación por su código cifrado (público -- el invitado aún no tiene cuenta)
+      security: []
+      parameters: [{ name: encrypted_verification_code, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK }, '400': { description: "Código inválido o expirado" }, '404': { description: No encontrada } }
+
+  /invitation/profile-upload/{invitation_code}:
+    post:
+      tags: [Invitations]
+      summary: Subir la foto de perfil durante el autoregistro (requiere invitación activa)
+      security: []
+      parameters: [{ name: invitation_code, in: path, required: true, schema: { type: string } }]
+      requestBody: { content: { multipart/form-data: { schema: { type: object, properties: { file: { type: string, format: binary } } } } } }
+      responses: { '201': { description: Subida }, '403': { description: "Invitación no activa" }, '429': { description: "Límite de 10 uploads/15min excedido" } }
+
+  /invitation/status/{invitation_code}:
+    get:
+      tags: [Invitations]
+      summary: Estado de una invitación
+      security: []
+      parameters: [{ name: invitation_code, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK }, '404': { description: No encontrada } }
+
+  # ============================== DIGITAL CONTRACTS ==============================
+  /contracts/access-session:
+    post:
+      tags: [Contracts]
+      summary: Canjear un access_token de contrato por una cookie de sesión de contrato
+      security: []
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [access_token], properties: { access_token: { type: string, pattern: '^[a-f0-9]{64}$' } } } } }
+      responses: { '204': { description: "Cookie contract_access seteada" }, '400': { description: Formato de token inválido }, '401': { description: Token inválido o expirado }, '429': { description: "Límite de 20 intentos/15min excedido" } }
+
+  /contracts/{contract_code}/signed-upload:
+    post:
+      tags: [Contracts]
+      summary: Subir el PDF firmado de un contrato
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: contract_code, in: path, required: true, schema: { type: string } }]
+      requestBody: { content: { multipart/form-data: { schema: { type: object, properties: { file: { type: string, format: binary } } } } } }
+      responses: { '201': { description: Subido }, '403': { description: "Sin permiso de update sobre el contrato" }, '415': { description: "No es un PDF real" } }
+
+  /contracts/create:
+    post:
+      tags: [Contracts]
+      summary: Crear un contrato digital
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [contract_content_url, contract_parties]
+              properties:
+                contract_title: { type: string, maxLength: 200 }
+                contract_start_date: { type: string }
+                contract_end_date: { type: string }
+                contract_attachments: { type: array, items: { type: string } }
+                contract_content_url: { type: string, maxLength: 2048 }
+                contract_parties: { type: array, items: { $ref: '#/components/schemas/ContractParty' } }
+      responses: { '201': { description: Creado, content: { application/json: { schema: { $ref: '#/components/schemas/DigitalContract' } } } }, '400': { description: Validación fallida }, '403': { description: "No sos empleado de esta organización" } }
+
+  /contracts/{contract_code}/invite:
+    post:
+      tags: [Contracts]
+      summary: Invitar a una parte a un contrato existente
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: contract_code, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Invitación enviada }, '403': { description: "Sin permiso de write sobre el contrato" }, '404': { description: Contrato no encontrado } }
+
+  /contracts/{contract_code}/discussion:
+    post:
+      tags: [Contracts]
+      summary: Agregar un mensaje a la discusión del contrato
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: contract_code, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [message], properties: { message: { type: string, maxLength: 5000 }, attachments: { type: array, items: { type: string } } } } } }
+      responses: { '201': { description: Mensaje agregado }, '403': { description: "Sin permiso de add_discussion sobre el contrato" } }
+
+  /contracts/organization/{organization_code}:
+    get:
+      tags: [Contracts]
+      summary: Listar contratos de una organización
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: organization_code, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK }, '403': { description: De otra organización } }
+
+  /contracts/{contract_code}:
+    put:
+      tags: [Contracts]
+      summary: Actualizar un contrato (título, fechas, adjuntos, estado)
+      security: []
+      description: "Autenticado vía JWT o vía token de acceso de contrato (authenticateContractAccess), no bearerAuth genérico."
+      parameters: [{ name: contract_code, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                contract_title: { type: string, maxLength: 200 }
+                contract_start_date: { type: string }
+                contract_end_date: { type: string }
+                contract_attachments: { type: array, items: { type: string }, maxItems: 20, description: "Cada URL debe ser un upload administrado propio." }
+                contract_status: { type: string, enum: [active, in_discussion, on_hold, terminated, disputed] }
+      responses: { '200': { description: "Actualizado (o \"No changes detected\" si el body no trae nada nuevo)" }, '400': { description: "contract_status inválido, o adjuntos inválidos/no administrados" }, '403': { description: "No sos parte del contrato, la invitación no fue aceptada, o falta permiso de update" } }
+    get:
+      tags: [Contracts]
+      summary: Ver un contrato (incluye la discusión y los permisos propios sobre él)
+      security: []
+      description: "Autenticado vía JWT o vía token de acceso de contrato (authenticateContractAccess)."
+      parameters: [{ name: contract_code, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK }, '403': { description: "No sos parte del contrato, invitación no aceptada, o falta permiso de view" } }
+
+  /contracts/{contract_code}/sign:
+    post:
+      tags: [Contracts]
+      summary: Firmar un contrato
+      security: []
+      description: "Autenticado vía JWT o vía token de acceso de contrato."
+      parameters: [{ name: contract_code, in: path, required: true, schema: { type: string } }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { attachment_url: { type: string }, attachment_name: { type: string } } } } } }
+      responses: { '200': { description: Firmado } }
+
+  /contracts/{contract_code}/private-files/{filename}:
+    get:
+      tags: [Contracts]
+      summary: Descargar el PDF firmado de un contrato
+      description: >
+        No hay ruta estática ni servicio de almacenamiento público hacia
+        este archivo -- se guarda en el volumen private_contracts_data,
+        separado de uploads_data, y solo esta ruta autenticada lo entrega
+        (permiso view sobre este contrato, o rol admin).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: contract_code, in: path, required: true, schema: { type: string } }
+        - { name: filename, in: path, required: true, schema: { type: string }, description: "Debe matchear signed-<hash>.pdf y estar referenciado en signed_copies del contrato" }
+      responses:
+        '200': { description: "PDF, Content-Disposition: attachment" }
+        '401': { description: Sin sesión }
+        '403': { description: "Sin permiso view sobre este contrato" }
+        '404': { description: "No existe, o no corresponde a este contrato" }
+
+  /contracts/{contract_code}/generate-token:
+    post:
+      tags: [Contracts]
+      summary: Generar un token de acceso de contrato para una parte (creador o admin)
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: contract_code, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+                permissions: { type: object }
+                expires_in_days: { type: integer }
+      responses: { '201': { description: "Token generado -- solo se devuelve en esta respuesta" }, '403': { description: "Solo el creador o un admin" }, '404': { description: Contrato no encontrado } }
+
+  /contracts/refresh-token:
+    post:
+      tags: [Contracts]
+      summary: Rotar un token de acceso de contrato antes de que expire
+      security: []
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [access_token], properties: { access_token: { type: string, pattern: '^[a-f0-9]{64}$' } } } } }
+      responses: { '200': { description: "Token anterior revocado, uno nuevo emitido" }, '400': { description: Formato inválido }, '403': { description: Token inválido o expirado }, '429': { description: "Límite de 20 intentos/15min excedido" } }
+
+  /contracts/{contract_code}/remove/{party_email}:
+    delete:
+      tags: [Contracts]
+      summary: Quitar una parte de un contrato
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: contract_code, in: path, required: true, schema: { type: string } }
+        - { name: party_email, in: path, required: true, schema: { type: string, format: email } }
+      responses: { '200': { description: Removida }, '403': { description: "Sin permiso de write, o no sos admin" }, '404': { description: "Contrato o parte no encontrada" } }
+
+  /contracts/{contract_code}/accept-invitation:
+    post:
+      tags: [Contracts]
+      summary: Aceptar una invitación a un contrato
+      security: []
+      description: "Autenticado vía JWT o vía token de acceso de contrato."
+      parameters: [{ name: contract_code, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Aceptada } }
+
+  # ============================== LMS ==============================
+  /lms/webhook/course-completed:
+    post:
+      tags: [LMS]
+      summary: Webhook -- un LMS externo notifica que un alumno completó un curso, emite la credencial automáticamente
+      security: [{ apiKeyAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [external_event_id, design_code]
+              properties:
+                external_event_id: { type: string, description: "Idempotencia -- un reintento del mismo evento nunca emite dos veces." }
+                achiever_username: { type: string }
+                guest_recipient: { type: object }
+                design_code: { type: string }
+                credential_title: { type: string }
+                custom_fields: { type: object }
+      responses:
+        '200': { description: "Ya procesado antes (idempotente) -- devuelve el credential_code existente" }
+        '201': { description: Credencial emitida }
+        '400': { description: "Faltan campos requeridos" }
+        '502': { description: Falla la emisión }
+
+  /lms/config:
+    put:
+      tags: [LMS]
+      summary: Configurar la API del propio LMS para sincronización periódica (pull)
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sync_api_url, sync_api_token]
+              properties:
+                sync_api_url: { type: string, format: uri }
+                sync_api_token: { type: string, description: "Se cifra en reposo de inmediato -- nunca se devuelve en texto plano." }
+                enabled: { type: boolean, default: true }
+      responses: { '200': { description: Guardado }, '400': { description: "Faltan campos, o sync_api_url inválida" }, '403': { description: Requiere rol admin } }
+
+  /lms/sync-log:
+    get:
+      tags: [LMS]
+      summary: Historial de sincronizaciones fallidas con el LMS propio
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }]
+      responses: { '200': { description: OK } }
+
+  # ============================== ANCHORING ==============================
+  /anchors/verify/{credential_code}:
+    get:
+      tags: [Anchoring]
+      summary: Prueba de Merkle de que una credencial fue incluida en un lote anclado (público)
+      security: []
+      parameters: [{ name: credential_code, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK }, '404': { description: "Aún no incluida en ningún lote anclado" } }
+
+  # ============================== DASHBOARDS ==============================
+  /overview/{organization_code}:
+    get:
+      tags: [Dashboards]
+      summary: Panel general de la organización (empleados, contratos, credenciales, top 5)
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: organization_code, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK }, '403': { description: De otra organización }, '404': { description: Organización no encontrada } }
+
+  /overview/employee/{organization_code}/{username}:
+    get:
+      tags: [Dashboards]
+      summary: Panel de un empleado (credenciales, metas, empleado destacado)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: organization_code, in: path, required: true, schema: { type: string } }
+        - { name: username, in: path, required: true, schema: { type: string } }
+      responses: { '200': { description: OK }, '403': { description: De otra organización }, '404': { description: Empleado no encontrado } }
+
+  /organization_performance/{organization_code}:
+    get:
+      tags: [Dashboards]
+      summary: Panel de analítica de la organización (productividad, crecimiento, mejor/peor desempeño)
+      description: >
+        Comparte lógica de agregación con /overview y /performance vía
+        services/dashboardMetricsService.js (hallazgo H-23 -- las tres
+        implementaciones calculaban lo mismo por separado).
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: organization_code, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK }, '403': { description: De otra organización } }
+
+  /performance/{username}:
+    get:
+      tags: [Dashboards]
+      summary: Panel de desempeño individual de un usuario (ranking, progreso mensual, logros)
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: username, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK }, '403': { description: "De otro usuario sin ser admin, o de otra organización" }, '404': { description: Usuario no encontrado } }

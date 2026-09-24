@@ -1,0 +1,18 @@
+<svg viewBox="0 0 900 636" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="techGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#3b3f8f"/>
+    </linearGradient>
+    <linearGradient id="techAccent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#818cf8"/>
+    </linearGradient>
+  </defs>
+  <rect width="900" height="636" fill="url(#techGrad)"/>
+  <rect x="0" y="0" width="900" height="10" fill="url(#techAccent)"/>
+  <rect x="0" y="626" width="900" height="10" fill="url(#techAccent)"/>
+  <circle cx="820" cy="90" r="140" fill="#38bdf8" opacity="0.08"/>
+  <circle cx="80" cy="560" r="160" fill="#818cf8" opacity="0.10"/>
+  <line x1="80" y1="150" x2="400" y2="150" stroke="url(#techAccent)" stroke-width="3"/>
+</svg>

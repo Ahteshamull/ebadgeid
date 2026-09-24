@@ -1,0 +1,17 @@
+**/node_modules/
+**/.next/
+**/.env
+**/.env.*
+!**/.env.example
+**/coverage/
+**/__pycache__/
+**/*.pyc
+**/*.log
+backend (updated)/uploads/*
+!backend (updated)/uploads/.gitkeep
+.DS_Store
+# MongoDB replica-set internal-auth keyfile + root compose secrets (added by
+# the security audit round that enabled --auth on MongoDB, previously
+# unauthenticated -- see docker-compose.yml's mongo service and CHANGELOG.md).
+secrets/
+runtime-secrets/
