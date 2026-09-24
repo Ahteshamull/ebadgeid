@@ -88,10 +88,16 @@ if (process.env.NODE_ENV === 'production' && allowedOrigins.length === 0) {
 // by this. samlAcsPathPattern scopes the exception to exactly this one
 // path -- not the rest of /api/auth/saml/*, nowhere near the rest of /api.
 const samlAcsPathPattern = /^\/api\/auth\/saml\/[^/]+\/acs$/;
+const isAllowedOrigin = (origin) => {
+  if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) return true;
+  try {
+    const parsed = new URL(origin);
+    if (parsed.hostname.endsWith('.vercel.app')) return true;
+  } catch {}
+  return false;
+};
 const corsOriginCheck = (origin, callback) => {
-  // Allow non-browser tools (curl, server-to-server) with no Origin header,
-  // and any origin explicitly whitelisted in .env.
-  if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+  if (isAllowedOrigin(origin)) {
     return callback(null, true);
   }
   return callback(null, false);
@@ -228,7 +234,7 @@ app.use('/api', (req, res, next) => {
   // samlAcsPathPattern above.
   if (samlAcsPathPattern.test(req.originalUrl.split('?')[0])) return next();
   const origin = req.get('origin');
-  if (origin && !allowedOrigins.includes(origin)) {
+  if (origin && !isAllowedOrigin(origin)) {
     return res.status(403).json({ message: 'Request origin is not allowed' });
   }
   next();
