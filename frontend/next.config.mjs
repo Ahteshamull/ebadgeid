@@ -53,6 +53,7 @@ const nextConfig = {
     // image-domain enforcement. Replaced with remotePatterns containing
     // only the domains real <Image> usages in this app actually point to.
     remotePatterns: [
+      { protocol: 'https', hostname: 'ebadgeid.onrender.com' },
       { protocol: 'https', hostname: 'api.ebadgeid.com' },
       { protocol: 'https', hostname: 'ftp.ebadgeid.com' },
       // Local/docker-compose storage.js (see src/lib/api.js UPLOAD_BASE_URL)

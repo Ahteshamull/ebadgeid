@@ -7,18 +7,8 @@
 // that they do (see AUDIT_FIXES.md), every authenticated call needs to go
 // through something that actually attaches the token, or it 401s.
 
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://api.ebadgeid.com/api';
-// Was `https://ftp.ebadgeid.com` — an external service this repo never
-// includes or can verify. `backend (updated)/storage.js` is a real, already
-// -built, authenticated storage microservice (byte-validated uploads, same
-// controller as the main API's own /api/uploads, accepts any authenticated
-// session from either backend's JWT domain — not admin-only) that
-// docker-compose.yml already wires every frontend to via
-// NEXT_PUBLIC_UPLOAD_BASE_URL=http://localhost:9000. This only changes the
-// fallback used when that env var isn't set (e.g. `npm run dev` outside
-// docker compose) — a real production deployment that still needs
-// ftp.ebadgeid.com sets the env var explicitly and is unaffected.
-export const UPLOAD_BASE_URL = process.env.NEXT_PUBLIC_UPLOAD_BASE_URL || 'http://localhost:9000';
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://ebadgeid.onrender.com/api';
+export const UPLOAD_BASE_URL = process.env.NEXT_PUBLIC_UPLOAD_BASE_URL || 'https://ebadgeid.onrender.com';
 
 // The API and web application deliberately use separate subdomains in
 // production.  A host-only `ebadge_csrf` cookie written by api.ebadgeid.com
