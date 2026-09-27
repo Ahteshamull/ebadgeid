@@ -1363,20 +1363,39 @@ export default function DesignEditorPage({ initialKind } = {}) {
   const [downloading, setDownloading] = useState(false);
 
   const composeCanvas = async () => {
-    if (!backgroundUrl) throw new Error('Add a background image first.');
-    const bg = await new Promise((resolve, reject) => {
-      const img = new window.Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => resolve(img);
-      img.onerror = () => reject(new Error('Could not load the background image (check it loads directly in a browser tab).'));
-      img.src = backgroundUrl;
-    });
-
     const canvas = document.createElement('canvas');
     canvas.width = canvasSize.w;
     canvas.height = canvasSize.h;
     const ctx = canvas.getContext('2d');
-    ctx.drawImage(bg, 0, 0, canvasSize.w, canvasSize.h);
+
+    // Default clean canvas background
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvasSize.w, canvasSize.h);
+
+    const isPotentialUrl = backgroundUrl && /^(https?:\/\/|data:|\/)/i.test(backgroundUrl.trim());
+    if (isPotentialUrl) {
+      try {
+        const bg = await new Promise((resolve) => {
+          const img = new window.Image();
+          img.crossOrigin = 'anonymous';
+          img.onload = () => resolve(img);
+          img.onerror = () => {
+            // Retry without crossOrigin if CORS was the cause
+            const fallbackImg = new window.Image();
+            fallbackImg.onload = () => resolve(fallbackImg);
+            fallbackImg.onerror = () => resolve(null);
+            fallbackImg.src = backgroundUrl.trim();
+          };
+          img.src = backgroundUrl.trim();
+        });
+
+        if (bg) {
+          ctx.drawImage(bg, 0, 0, canvasSize.w, canvasSize.h);
+        }
+      } catch (bgError) {
+        console.warn('Background image could not be drawn to canvas:', bgError);
+      }
+    }
 
     if (document.fonts?.ready) {
       try { await document.fonts.ready; } catch { /* best effort */ }
@@ -2243,8 +2262,8 @@ export default function DesignEditorPage({ initialKind } = {}) {
             <div className="relative">
               <button
                 onClick={() => setDownloadMenuOpen((v) => !v)}
-                disabled={downloading || !backgroundUrl}
-                title={!backgroundUrl ? 'Add a background image first' : 'Download this template'}
+                disabled={downloading}
+                title="Download this template"
                 className="flex items-center gap-1 border px-3 py-2 rounded-lg text-sm disabled:opacity-50"
               >
                 {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}

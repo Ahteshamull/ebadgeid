@@ -247,12 +247,13 @@ export default function CredentialManagementPage() {
     return () => clearTimeout(timer);
   }, [search]);
 
-  // Fetch employees when single-issue modal opens
+  // Fetch employees and designs when single-issue modal opens
   useEffect(() => {
     if (showInviteModal) {
       fetchEmployees();
+      fetchDesigns();
     }
-  }, [showInviteModal]);
+  }, [showInviteModal, organizationCode]);
 
   // Guards the bulk-issuance status poll below from setting state after
   // this page has been navigated away from.
@@ -395,12 +396,21 @@ export default function CredentialManagementPage() {
     const guestName = `${guestRecipient.first_name.trim()} ${guestRecipient.last_name.trim()}`.trim();
     const achieverUsername = isGuestRecipient ? guestName : singleForm.achiever_username;
 
-    if (!achieverUsername || !singleForm.selected_design) {
-      setError('Please fill all required fields');
+    if (!singleForm.selected_design) {
+      setError('Please select a certificate design from the dropdown above');
       return;
     }
-    if (isGuestRecipient && (!guestRecipient.first_name.trim() || !guestRecipient.last_name.trim() || !guestRecipient.email.trim())) {
-      setError('Guest recipients need a first name, last name, and email');
+    if (isGuestRecipient) {
+      if (!guestRecipient.first_name.trim() || !guestRecipient.last_name.trim()) {
+        setError('Please enter the guest recipient first and last name');
+        return;
+      }
+      if (!guestRecipient.email.trim()) {
+        setError('Please enter the guest recipient email address');
+        return;
+      }
+    } else if (!achieverUsername) {
+      setError('Please select an achiever from your organization');
       return;
     }
 
@@ -1476,20 +1486,39 @@ export default function CredentialManagementPage() {
                     <SelectValue placeholder="Choose a design" />
                   </SelectTrigger>
                   <SelectContent className="bg-card border-border text-foreground">
-                    {designs.filter((d) => (d.design_kind || 'certificate') === issueKind).map((design) => (
-                      <SelectItem key={design.design_code} value={design.design_code}>
-                        <div className="flex items-center gap-2">
-                          <Image
-                            src={design.main_template_url}
-                            alt={design.design_code}
-                            width={40}
-                            height={30}
-                            className="rounded object-cover border border-border"
-                          />
-                          <span className="font-medium">{design.design_code}</span>
-                        </div>
-                      </SelectItem>
-                    ))}
+                    {designs.filter((d) => (d.design_kind || 'certificate') === issueKind).length === 0 ? (
+                      <div className="p-3 text-xs text-muted-foreground text-center">
+                        No {issueKind} designs found.
+                      </div>
+                    ) : (
+                      designs.filter((d) => (d.design_kind || 'certificate') === issueKind).map((design) => {
+                        const isValidUrl = design.main_template_url && /^(https?:\/\/|data:|\/)/i.test(design.main_template_url.trim());
+                        return (
+                          <SelectItem key={design.design_code} value={design.design_code}>
+                            <div className="flex items-center gap-2">
+                              {isValidUrl ? (
+                                <img
+                                  src={design.main_template_url}
+                                  alt={design.design_code}
+                                  className="w-8 h-6 rounded object-cover border border-border"
+                                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                                />
+                              ) : (
+                                <div className="w-8 h-6 rounded bg-muted flex items-center justify-center border border-border">
+                                  <Award className="h-3.5 w-3.5 text-primary" />
+                                </div>
+                              )}
+                              <div className="flex flex-col text-left">
+                                <span className="font-medium text-xs text-foreground">{design.design_name || design.design_code}</span>
+                                {design.design_name && (
+                                  <span className="text-[10px] text-muted-foreground">{design.design_code}</span>
+                                )}
+                              </div>
+                            </div>
+                          </SelectItem>
+                        );
+                      })
+                    )}
                   </SelectContent>
                 </Select>
               </div>
@@ -1514,15 +1543,22 @@ export default function CredentialManagementPage() {
 
             {!certificatePreview && singleForm.selected_design && (
               <div className="border border-border rounded-lg p-4 bg-muted/30">
-                <p className="text-sm font-medium text-foreground mb-2">Template background (not the final layout):</p>
+                <p className="text-sm font-medium text-foreground mb-2">Template preview:</p>
                 <div className="flex justify-center">
-                  <Image
-                    src={singleForm.selected_design.main_template_url}
-                    alt="Selected design"
-                    width={200}
-                    height={150}
-                    className="rounded-lg object-cover border border-border shadow-sm"
-                  />
+                  {singleForm.selected_design.main_template_url && /^(https?:\/\/|data:|\/)/i.test(singleForm.selected_design.main_template_url.trim()) ? (
+                    <img
+                      src={singleForm.selected_design.main_template_url}
+                      alt="Selected design"
+                      className="rounded-lg object-contain max-h-40 border border-border shadow-sm"
+                      onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center justify-center p-4 border border-dashed border-border rounded-lg bg-background w-full">
+                      <Award className="h-7 w-7 text-primary mb-1" />
+                      <p className="text-sm font-medium text-foreground">{singleForm.selected_design.design_name || singleForm.selected_design.design_code}</p>
+                      <p className="text-xs text-muted-foreground">Code: {singleForm.selected_design.design_code}</p>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -1543,32 +1579,46 @@ export default function CredentialManagementPage() {
             )}
 
             {certificatePreview ? (
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  className="flex-1 border-border text-foreground hover:bg-muted"
-                  onClick={handleDiscardPreview}
-                  disabled={loading}
-                >
-                  Back
-                </Button>
-                <Button
-                  className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90"
-                  onClick={handleConfirmIssue}
-                  disabled={loading}
-                >
-                  {loading ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Issuing...
-                    </>
-                  ) : (
-                    <>
-                      <Award className="mr-2 h-4 w-4" />
-                      Confirm & Issue
-                    </>
-                  )}
-                </Button>
+              <div className="flex flex-col gap-2">
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="flex-1 border-border text-foreground hover:bg-muted"
+                    onClick={handleDiscardPreview}
+                    disabled={loading}
+                  >
+                    Back
+                  </Button>
+                  <Button
+                    className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90"
+                    onClick={handleConfirmIssue}
+                    disabled={loading}
+                  >
+                    {loading ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Issuing...
+                      </>
+                    ) : (
+                      <>
+                        <Award className="mr-2 h-4 w-4" />
+                        Confirm & Issue
+                      </>
+                    )}
+                  </Button>
+                </div>
+                {certificatePreview.url && (
+                  <a
+                    href={certificatePreview.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    download="certificate_preview.png"
+                    className="flex items-center justify-center gap-2 text-xs text-primary hover:underline py-1"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Download Generated Certificate Image
+                  </a>
+                )}
               </div>
             ) : (
               <Button
