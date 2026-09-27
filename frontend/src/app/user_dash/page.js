@@ -82,8 +82,7 @@ export default function EmployeeDashboard() {
   const recentAchievements = achievements.slice(0, 5);
 
   return (
-    <div className="min-h-screen p-8">
-      <div className="max-w-7xl mx-auto space-y-8">
+    <div className="w-full space-y-8">
         <div>
           <h1 className="text-4xl font-bold text-foreground mb-2">Welcome back, {data.user?.name || data.user?.username}</h1>
           <p className="text-muted-foreground text-lg">{data.user?.organization}</p>
@@ -176,6 +175,5 @@ export default function EmployeeDashboard() {
           </CardContent>
         </Card>
       </div>
-    </div>
   );
 }

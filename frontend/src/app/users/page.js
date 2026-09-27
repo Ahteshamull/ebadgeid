@@ -397,9 +397,7 @@ export default function UserManagementPage() {
 
   return (
     <div className="min-h-full w-full">
-      {/* Explicit width/min-width make this page respect DashboardShell's
-          available content column instead of its intrinsic table width. */}
-      <div className="mx-auto w-full min-w-0 max-w-7xl space-y-6 sm:space-y-8">
+      <div className="w-full min-w-0 space-y-6 sm:space-y-8">
         {/* Header Section */}
         <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
           <div>

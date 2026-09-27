@@ -355,20 +355,15 @@ Expires: ${expiryDate.toLocaleDateString()}`
 
   if (loading) {
     return (
-      <div className="min-h-screen p-6 bg-gradient-to-br from-slate-50 to-slate-100">
-        <div className="max-w-7xl mx-auto">
-          <div className="flex items-center justify-center h-64">
-            <Loader2 className="h-8 w-8 animate-spin text-slate-600" />
-            <span className="ml-3 text-slate-600">Loading your credentials...</span>
-          </div>
-        </div>
+      <div className="w-full flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <span className="ml-3 text-muted-foreground">Loading your credentials...</span>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen p-6">
-      <div className="max-w-7xl mx-auto space-y-6">
+    <div className="w-full space-y-6">
         {/* Header Section */}
         <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
           <div>
@@ -636,6 +631,5 @@ Expires: ${expiryDate.toLocaleDateString()}`
           </CardContent>
         </Card>
       </div>
-    </div>
   );
 }

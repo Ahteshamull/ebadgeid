@@ -205,8 +205,7 @@ export default function GoalManagementPage() {
   };
 
   return (
-    <div className="min-h-screen p-6">
-      <div className="max-w-7xl mx-auto space-y-6">
+    <div className="w-full space-y-6">
         {/* Header Section */}
         <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
           <div>
@@ -517,6 +516,5 @@ export default function GoalManagementPage() {
           </CardContent>
         </Card>
       </div>
-    </div>
   );
 }
