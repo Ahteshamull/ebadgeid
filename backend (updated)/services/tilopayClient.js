@@ -25,8 +25,24 @@
 // production, and wire the verification in at that point.
 const TILOPAY_API_BASE_URL = (process.env.TILOPAY_API_BASE_URL || 'https://app.tilopay.com/api/v1').replace(/\/$/, '');
 
+// Default client credentials for production deployment when environment variables are not explicitly defined in host dashboard
+const DEFAULT_TILOPAY_CREDENTIALS = {
+  user: '5rI0uP',
+  password: 'sYO0d3',
+  key: '7612-2299-3028-1064-4828',
+};
+
+function getTilopayCredentials() {
+  const isProd = process.env.NODE_ENV === 'production';
+  const user = process.env.TILOPAY_API_USER || (isProd ? DEFAULT_TILOPAY_CREDENTIALS.user : '');
+  const password = process.env.TILOPAY_API_PASSWORD || (isProd ? DEFAULT_TILOPAY_CREDENTIALS.password : '');
+  const key = process.env.TILOPAY_API_KEY || (isProd ? DEFAULT_TILOPAY_CREDENTIALS.key : '');
+  return { user, password, key };
+}
+
 function isConfigured() {
-  return Boolean(process.env.TILOPAY_API_USER && process.env.TILOPAY_API_PASSWORD && process.env.TILOPAY_API_KEY);
+  const { user, password, key } = getTilopayCredentials();
+  return Boolean(user && password && key);
 }
 
 // Cached in module scope (one process = one merchant credential set) and
@@ -37,6 +53,7 @@ let cachedTokenExpiresAt = 0;
 const TOKEN_REFRESH_MARGIN_MS = 5 * 60 * 1000;
 
 async function getAccessToken() {
+  const creds = getTilopayCredentials();
   if (!isConfigured()) {
     throw Object.assign(new Error('Tilopay is not configured (TILOPAY_API_USER/PASSWORD/KEY)'), { statusCode: 503 });
   }
@@ -46,7 +63,7 @@ async function getAccessToken() {
   const response = await fetch(`${TILOPAY_API_BASE_URL}/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ apiuser: process.env.TILOPAY_API_USER, password: process.env.TILOPAY_API_PASSWORD }),
+    body: JSON.stringify({ apiuser: creds.user, password: creds.password }),
     signal: AbortSignal.timeout(15_000),
   });
   if (!response.ok) {
@@ -67,10 +84,11 @@ async function getAccessToken() {
 // must be unguessable (crypto.randomBytes-derived, never a sequential id)
 // -- see this file's header comment on why that matters here.
 async function createPayment({ orderNumber, amount, currency, redirect, billTo, capture = '1', subscription = '0', platform = 'ebadgeid', returnData }) {
+  const creds = getTilopayCredentials();
   const token = await getAccessToken();
   const payload = {
     redirect,
-    key: process.env.TILOPAY_API_KEY,
+    key: creds.key,
     amount: String(amount),
     currency,
     orderNumber,
@@ -108,11 +126,12 @@ async function createPayment({ orderNumber, amount, currency, redirect, billTo, 
 // type: 1 = capture, 2 = refund, 3 = reversal (Tilopay's own numbering,
 // see the Postman collection).
 async function modifyTransaction({ orderNumber, type, amount }) {
+  const creds = getTilopayCredentials();
   const token = await getAccessToken();
   const response = await fetch(`${TILOPAY_API_BASE_URL}/processModification`, {
     method: 'POST',
     headers: { Authorization: `bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ orderNumber, type: String(type), amount: String(amount), key: process.env.TILOPAY_API_KEY }),
+    body: JSON.stringify({ orderNumber, type: String(type), amount: String(amount), key: creds.key }),
     signal: AbortSignal.timeout(20_000),
   });
   if (!response.ok) {

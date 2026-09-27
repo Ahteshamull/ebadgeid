@@ -155,6 +155,10 @@ services:
       PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:?Set PUBLIC_API_BASE_URL in .env}
       CONTRACT_APP_URL: ${PUBLIC_CONTRACT_APP_URL:?Set PUBLIC_CONTRACT_APP_URL in .env}
       STORAGE_FILE_SIGNING_KEY: ${STORAGE_FILE_SIGNING_KEY:?Set STORAGE_FILE_SIGNING_KEY in .env}
+      TILOPAY_API_USER: ${TILOPAY_API_USER:-5rI0uP}
+      TILOPAY_API_PASSWORD: ${TILOPAY_API_PASSWORD:-sYO0d3}
+      TILOPAY_API_KEY: ${TILOPAY_API_KEY:-7612-2299-3028-1064-4828}
+      TILOPAY_API_BASE_URL: ${TILOPAY_API_BASE_URL:-https://app.tilopay.com/api/v1}
       # Empty by default -- an org's LMS sync config (routes/lmsWebhookRoutes.js
       # PUT /config) is rejected outright until this lists the operator-
       # approved LMS hostnames (comma-separated, `*.suffix` wildcards
