@@ -215,7 +215,7 @@ export default function LmsIntegrationManagement() {
   const activePlatform = LMS_PLATFORMS.find(p => p.id === selectedPlatform) || LMS_PLATFORMS[0];
 
   return (
-    <div className="space-y-8 max-w-5xl">
+    <div className="space-y-8 w-full">
       {/* Intro Header */}
       <div>
         <div className="flex items-center gap-3 mb-2">
