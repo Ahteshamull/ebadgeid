@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useContext } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { apiFetch } from '@/lib/api';
 import { Sidebar } from '@/components/dashboard/sidebar';
 import { Header } from '@/components/layout/header';
 import { Footer } from '@/components/layout/footer';
+import { AppShellContext } from '@/components/layout/app-shell';
 
 // `chromeless` skips the Header/Sidebar/Footer wrapper below, keeping only
 // the auth/role check and redirect. For nested layouts that need a
@@ -15,6 +16,11 @@ import { Footer } from '@/components/layout/footer';
 // would render the chrome twice, since Next.js layouts wrap their children
 // rather than replace them.
 export function DashboardShell({ children, requiredRole, chromeless = false }) {
+  const { inShell } = useContext(AppShellContext);
+  if (inShell) {
+    return <>{children}</>;
+  }
+
   const [authorized, setAuthorized] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const router = useRouter();

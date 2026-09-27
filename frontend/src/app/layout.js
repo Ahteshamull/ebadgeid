@@ -1,6 +1,6 @@
-// app/layout.js
 import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
+import { AppShell } from "@/components/layout/app-shell"
 
 export const metadata = {
   title: "eBadge ID | Digital Credentials",
@@ -20,7 +20,9 @@ export default function RootLayout({ children }) {
           enableSystem
           disableTransitionOnChange
         >
-          {children}
+          <AppShell>
+            {children}
+          </AppShell>
         </ThemeProvider>
       </body>
     </html>

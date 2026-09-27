@@ -3,7 +3,7 @@
 
 import { useState, useEffect } from "react"
 import { apiFetch, setAuthToken } from "@/lib/api"
-import { useSession } from '@/hooks/use-session'
+import { useSession, clearSessionCache } from '@/hooks/use-session'
 import Link from "next/link"
 import { Bell, Globe, ChevronDown, Check, CheckCheck, MoreVertical, LogOut, ShieldAlert, Cog, MessageSquare, Award, Menu, Mail, ExternalLink } from "lucide-react"
 import { RefreshCw } from "lucide-react"
@@ -115,10 +115,9 @@ export function Header({ onMenuClick } = {}) {
         }
       } else if (savedLang && savedLang !== 'en') {
         setSelectedLanguage(savedLang);
-        setTimeout(() => {
-          window.location.hash = `#googtrans(en|${savedLang})`;
-          window.location.reload();
-        }, 1000);
+        try {
+          document.cookie = `googtrans=/en/${savedLang}; path=/`;
+        } catch (_) {}
       }
     };
     
@@ -131,7 +130,13 @@ export function Header({ onMenuClick } = {}) {
       if (translateCombo) {
         setIsTranslateReady(true);
         const currentLang = getCurrentLanguage();
-        setSelectedLanguage(currentLang || 'en');
+        const savedLang = localStorage.getItem('preferred-language');
+        const langToUse = savedLang && savedLang !== 'en' ? savedLang : currentLang || 'en';
+        setSelectedLanguage(langToUse);
+        if (savedLang && savedLang !== 'en' && translateCombo.value !== savedLang) {
+          translateCombo.value = savedLang;
+          translateCombo.dispatchEvent(new Event('change', { bubbles: true }));
+        }
         
         translateCombo.addEventListener('change', () => {
           const newLang = getCurrentLanguage();
@@ -142,7 +147,7 @@ export function Header({ onMenuClick } = {}) {
       }
     };
 
-    const timer = setTimeout(checkTranslateReady, 2000);
+    const timer = setTimeout(checkTranslateReady, 1000);
     return () => clearTimeout(timer);
   }, []);
 
@@ -686,6 +691,7 @@ export function Header({ onMenuClick } = {}) {
                   // JS — it has to be cleared server-side. Fire-and-forget:
                   // the local session clears regardless of whether this call
                   // succeeds.
+                  clearSessionCache();
                   setAuthToken(null);
                   apiFetch('/auth/logout', { method: 'POST', redirectOnUnauthorized: false }).catch(() => {});
                   window.location.href = '/auth/login'
