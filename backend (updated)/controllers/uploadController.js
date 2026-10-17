@@ -88,7 +88,13 @@ const fileUrl = (req, filename, storedFile) => {
   // Legacy /uploads URLs remain separately controlled during migration.
   if (storedFile && configuredBase) return `${configuredBase}/api/files/${encodeURIComponent(storedFile.storage_key)}`;
   if (configuredBase) return `${configuredBase}/uploads/${filename}`;
-  if (typeof req.get === 'function') return `${req.protocol}://${req.get('host')}/uploads/${filename}`;
+  const host = typeof req?.get === 'function' ? req.get('host') : null;
+  const forwardedProto = typeof req?.get === 'function' ? req.get('x-forwarded-proto') : null;
+  const isHttps = forwardedProto === 'https'
+    || req?.protocol === 'https'
+    || (host && (host.includes('onrender.com') || host.includes('ebadgeid.com')));
+  const proto = isHttps ? 'https' : (req?.protocol || 'http');
+  if (host) return `${proto}://${host}/uploads/${filename}`;
   return `/uploads/${filename}`;
 };
 

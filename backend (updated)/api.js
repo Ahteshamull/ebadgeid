@@ -54,12 +54,13 @@ if (process.env.NODE_ENV === 'production') {
   }
 }
 
-const trustProxyHops = Number.parseInt(process.env.TRUST_PROXY_HOPS || '0', 10);
-app.set('trust proxy', Number.isFinite(trustProxyHops) ? trustProxyHops : 0);
+const trustProxyHops = Number.parseInt(process.env.TRUST_PROXY_HOPS || (process.env.RENDER || process.env.NODE_ENV === 'production' ? '1' : '0'), 10);
+app.set('trust proxy', Number.isFinite(trustProxyHops) && trustProxyHops > 0 ? trustProxyHops : (process.env.RENDER ? 1 : 0));
 
-// Security headers (was missing here even though it's already a
-// dependency and already used correctly in help_backend/api.js).
-app.use(helmet());
+// Security headers (permits cross-origin image & asset embedding for design editor canvas and credentials)
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+}));
 
 // CORS: restrict to known frontends instead of allowing any origin.
 // Set ALLOWED_ORIGINS in .env as a comma-separated list, e.g.
@@ -279,13 +280,15 @@ app.use('/api/invitation', invitationRoutes);
 app.use('/api/designs', designRoutes)
 app.use('/api/assets', organizationAssetRoutes);
 app.use('/api/uploads', uploadRoutes);
-// Kept only for an explicit, time-bounded migration of existing credential
-// links. All new tenant files are served by storage.js through /api/files.
-if (process.env.ALLOW_LEGACY_PUBLIC_UPLOADS === 'true') {
+// Serves uploaded templates, certificates, and assets. Enabled by default
+// (ALLOW_LEGACY_PUBLIC_UPLOADS !== 'false') so uploaded backgrounds render reliably.
+if (process.env.ALLOW_LEGACY_PUBLIC_UPLOADS !== 'false') {
   app.use('/uploads', express.static(require('path').join(__dirname, 'uploads'), {
     setHeaders(res) {
       res.setHeader('Deprecation', 'true');
       res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      res.setHeader('Access-Control-Allow-Origin', '*');
     },
   }));
 } else {

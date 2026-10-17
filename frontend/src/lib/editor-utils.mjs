@@ -13,3 +13,17 @@ export function reorderLayer(elements, id, direction) {
 export function assignGroup(elements, selectedIds, groupId = null) {
   return elements.map(item => selectedIds.includes(item.id) ? { ...item, groupId } : item);
 }
+
+export function resolveEditorUploadUrl(url, baseOrigin = '', isPageHttps = false) {
+  if (!url) return '';
+  let resolved = String(url).trim();
+  if (!/^https?:\/\//i.test(resolved)) {
+    const origin = baseOrigin ? baseOrigin.replace(/\/$/, '') : '';
+    resolved = `${origin}${resolved.startsWith('/') ? '' : '/'}${resolved}`;
+  }
+  if (isPageHttps && resolved.startsWith('http://')) {
+    resolved = resolved.replace(/^http:\/\//i, 'https://');
+  }
+  return resolved;
+}
+

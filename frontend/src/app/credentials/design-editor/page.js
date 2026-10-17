@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { apiFetch, API_BASE_URL } from '@/lib/api';
 import { useSession } from '@/hooks/use-session';
-import { assignGroup, clampZoom, reorderLayer } from '@/lib/editor-utils.mjs';
+import { assignGroup, clampZoom, reorderLayer, resolveEditorUploadUrl } from '@/lib/editor-utils.mjs';
 import { TEMPLATE_LIBRARY } from '@/lib/template-library';
 import { validateAssetFile, cleanAssetName } from '@/lib/asset-upload-utils.mjs';
 
@@ -142,7 +142,9 @@ function newImageElement(url, naturalSize, canvasSize = { w: CANVAS_W, h: CANVAS
 // prefixing the API origin for the (theoretical, not currently reachable)
 // case where the backend ever does return a relative path.
 function resolveUploadUrl(url) {
-  return /^https?:\/\//i.test(url) ? url : `${new URL(API_BASE_URL).origin}${url}`;
+  const isHttps = typeof window !== 'undefined' && window.location?.protocol === 'https:';
+  const base = typeof API_BASE_URL === 'string' && API_BASE_URL.startsWith('http') ? new URL(API_BASE_URL).origin : '';
+  return resolveEditorUploadUrl(url, base, isHttps);
 }
 
 // --- Rotation-aware resize/rotate math for the transform handles --------
@@ -283,10 +285,12 @@ export default function DesignEditorPage({ initialKind } = {}) {
   // crashing the editor over an unreachable image.
   const probeImageSize = (url) => new Promise((resolve) => {
     if (!url) return resolve(null);
+    const resolvedUrl = resolveUploadUrl(url);
     const img = new window.Image();
+    img.crossOrigin = 'anonymous';
     img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
     img.onerror = () => resolve(null);
-    img.src = url;
+    img.src = resolvedUrl;
   });
   const checkpoint = () => {
     history.current.push(structuredClone(snapshot()));
@@ -2431,9 +2435,11 @@ export default function DesignEditorPage({ initialKind } = {}) {
           </label>
           <input
             value={backgroundUrl}
-            onChange={(e) => setBackgroundUrl(e.target.value)}
+            onChange={(e) => setBackgroundUrl(resolveUploadUrl(e.target.value))}
             onBlur={async (e) => {
-              const size = await probeImageSize(e.target.value);
+              const resolved = resolveUploadUrl(e.target.value);
+              if (resolved !== e.target.value) setBackgroundUrl(resolved);
+              const size = await probeImageSize(resolved);
               if (size) setCanvasSize(size);
             }}
             placeholder="Upload a managed PNG, JPG, WEBP, SVG or PDF template"
@@ -2491,7 +2497,7 @@ export default function DesignEditorPage({ initialKind } = {}) {
             transform: `scale(${zoom})`, transformOrigin: 'top left',
             backgroundPosition: 'center',
             backgroundColor: backgroundUrl ? undefined : '#f3f4f6',
-            backgroundImage: backgroundUrl ? `url(${backgroundUrl})` : (showGrid ? 'linear-gradient(#ddd 1px, transparent 1px), linear-gradient(90deg, #ddd 1px, transparent 1px)' : undefined),
+            backgroundImage: backgroundUrl ? `url("${backgroundUrl}")` : (showGrid ? 'linear-gradient(#ddd 1px, transparent 1px), linear-gradient(90deg, #ddd 1px, transparent 1px)' : undefined),
             backgroundSize: backgroundUrl ? 'cover' : (showGrid ? '20px 20px' : undefined),
             cursor: pinMode ? 'crosshair' : undefined,
           }}
