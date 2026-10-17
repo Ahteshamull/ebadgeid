@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { apiFetch, API_BASE_URL } from '@/lib/api';
 import { useSession } from '@/hooks/use-session';
-import { assignGroup, clampZoom, reorderLayer, resolveEditorUploadUrl } from '@/lib/editor-utils.mjs';
+import { assignGroup, clampZoom, calculateFitZoom, reorderLayer, resolveEditorUploadUrl } from '@/lib/editor-utils.mjs';
 import { TEMPLATE_LIBRARY } from '@/lib/template-library';
 import { validateAssetFile, cleanAssetName } from '@/lib/asset-upload-utils.mjs';
 
@@ -262,6 +262,16 @@ export default function DesignEditorPage({ initialKind } = {}) {
   const history = useRef([]);
   const future = useRef([]);
   const fileInputRef = useRef(null);
+  const workspaceContainerRef = useRef(null);
+
+  const fitToScreen = (customSize = null) => {
+    const targetSize = customSize || canvasSize;
+    const container = workspaceContainerRef.current;
+    const containerW = container ? container.clientWidth : 800;
+    const containerH = container ? container.clientHeight : 600;
+    const optimal = calculateFitZoom(targetSize, containerW, containerH, 64);
+    setZoom(optimal);
+  };
 
   const organizationCode = session?.organization_code;
 
@@ -1000,7 +1010,10 @@ export default function DesignEditorPage({ initialKind } = {}) {
   const applyBackground = async (url) => {
     setBackgroundUrl(url);
     const size = await probeImageSize(url);
-    if (size) setCanvasSize(size);
+    if (size) {
+      setCanvasSize(size);
+      fitToScreen(size);
+    }
   };
 
   const uploadBackground = async (event) => {
@@ -2250,7 +2263,7 @@ export default function DesignEditorPage({ initialKind } = {}) {
         )}
       </aside>
 
-      <div className="flex-1 flex flex-col items-center p-8 overflow-auto">
+      <div ref={workspaceContainerRef} className="flex-1 flex flex-col items-center p-8 overflow-auto">
         <div className="w-full max-w-4xl flex flex-wrap items-center justify-between gap-3 mb-4">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1 bg-muted p-1 rounded-xl border border-border">
@@ -2293,6 +2306,7 @@ export default function DesignEditorPage({ initialKind } = {}) {
             <button onClick={() => setZoom(value => clampZoom(value - 0.1))} className="p-2 rounded border" title="Zoom out"><ZoomOut className="w-4 h-4" /></button>
             <span className="text-xs w-10 text-center">{Math.round(zoom * 100)}%</span>
             <button onClick={() => setZoom(value => clampZoom(value + 0.1))} className="p-2 rounded border" title="Zoom in"><ZoomIn className="w-4 h-4" /></button>
+            <button onClick={() => fitToScreen()} className="px-2 py-1.5 text-xs font-medium rounded border hover:bg-muted" title="Fit canvas to screen">Fit</button>
             <span className="text-xs text-gray-600 border-l pl-2" title="Matches the background image's real pixel size">{canvasSize.w}×{canvasSize.h}</span>
             {activeDesignCode && designStatus && (
               <span
@@ -2440,7 +2454,10 @@ export default function DesignEditorPage({ initialKind } = {}) {
               const resolved = resolveUploadUrl(e.target.value);
               if (resolved !== e.target.value) setBackgroundUrl(resolved);
               const size = await probeImageSize(resolved);
-              if (size) setCanvasSize(size);
+              if (size) {
+                setCanvasSize(size);
+                fitToScreen(size);
+              }
             }}
             placeholder="Upload a managed PNG, JPG, WEBP, SVG or PDF template"
             className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2"

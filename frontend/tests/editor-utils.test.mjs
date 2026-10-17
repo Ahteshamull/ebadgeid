@@ -1,11 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assignGroup, clampZoom, reorderLayer, resolveEditorUploadUrl } from '../src/lib/editor-utils.mjs';
+import { assignGroup, clampZoom, calculateFitZoom, reorderLayer, resolveEditorUploadUrl } from '../src/lib/editor-utils.mjs';
 
 test('zoom remains inside the supported canvas range', () => {
-  assert.equal(clampZoom(0.1), 0.4);
-  assert.equal(clampZoom(2), 1.5);
+  assert.equal(clampZoom(0.05), 0.1);
+  assert.equal(clampZoom(2.5), 2.0);
   assert.equal(clampZoom(0.9), 0.9);
+  assert.equal(clampZoom(0.25), 0.25);
+});
+
+test('calculateFitZoom calculates optimal zoom for high-res canvases', () => {
+  // A 2400x3200 canvas on an 800x600 viewport should calculate around ~0.17 - 0.25
+  const fitHighRes = calculateFitZoom({ w: 2400, h: 3200 }, 800, 600, 48);
+  assert.ok(fitHighRes <= 0.35 && fitHighRes >= 0.1, `Fit zoom should fit viewport: ${fitHighRes}`);
+  // A standard 900x636 canvas fits nicely around 0.8
+  const fitStandard = calculateFitZoom({ w: 900, h: 636 }, 800, 600, 48);
+  assert.ok(fitStandard <= 1.0 && fitStandard >= 0.7, `Fit standard canvas: ${fitStandard}`);
 });
 
 test('layer reordering moves only the selected element', () => {
