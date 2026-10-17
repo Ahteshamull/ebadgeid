@@ -274,6 +274,89 @@ export default function DesignEditorPage({ initialKind } = {}) {
   };
 
   const organizationCode = session?.organization_code;
+  const initialDraftCheckedRef = useRef(false);
+  const initialTemplateLoadedRef = useRef(false);
+
+  // Restore unsaved local draft on page load if no template is opened via URL
+  useEffect(() => {
+    if (initialDraftCheckedRef.current || typeof window === 'undefined') return;
+    const urlParams = new URLSearchParams(window.location.search);
+    const codeParam = urlParams.get('code');
+    if (codeParam) return;
+
+    initialDraftCheckedRef.current = true;
+    const draftKey = `ebadge_design_draft_${organizationCode || 'default'}`;
+    try {
+      const raw = window.localStorage.getItem(draftKey);
+      if (raw) {
+        const draft = JSON.parse(raw);
+        if (draft && draft.backgroundUrl) {
+          setBackgroundUrl(draft.backgroundUrl);
+          if (draft.templateName) setTemplateName(draft.templateName);
+          if (draft.designKind) setDesignKind(draft.designKind);
+          if (draft.canvasSize) {
+            setCanvasSize(draft.canvasSize);
+            setTimeout(() => fitToScreen(draft.canvasSize), 120);
+          }
+          if (Array.isArray(draft.elements)) setElements(draft.elements);
+          if (Array.isArray(draft.shapes)) setShapes(draft.shapes);
+          if (Array.isArray(draft.images)) setImages(draft.images);
+          if (draft.qrPos) setQrPos(draft.qrPos);
+          setStatusMessage('Restored unsaved draft from your previous session.');
+          setTimeout(() => setStatusMessage(''), 4000);
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to restore draft', e);
+    }
+  }, [organizationCode]);
+
+  // If URL has ?code=..., automatically load that template once templates list loads
+  useEffect(() => {
+    if (initialTemplateLoadedRef.current || !templates.length || typeof window === 'undefined') return;
+    const urlParams = new URLSearchParams(window.location.search);
+    const codeParam = urlParams.get('code');
+    if (!codeParam) return;
+    const match = templates.find((t) => t.design_code === codeParam);
+    if (match) {
+      initialTemplateLoadedRef.current = true;
+      loadTemplateIntoEditor(match);
+    }
+  }, [templates]);
+
+  // Persist working draft to localStorage for unsaved templates so reloads never lose images
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const draftKey = `ebadge_design_draft_${organizationCode || 'default'}`;
+    if (!activeDesignCode && backgroundUrl) {
+      const draft = {
+        templateName,
+        backgroundUrl,
+        canvasSize,
+        elements,
+        shapes,
+        images,
+        qrPos,
+        designKind,
+        timestamp: Date.now(),
+      };
+      try {
+        window.localStorage.setItem(draftKey, JSON.stringify(draft));
+      } catch {}
+    }
+  }, [backgroundUrl, templateName, canvasSize, elements, shapes, images, qrPos, designKind, activeDesignCode, organizationCode]);
+
+  // Warn user before leaving or refreshing if they have unsaved changes on a new template
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (!activeDesignCode && backgroundUrl) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [activeDesignCode, backgroundUrl]);
 
   const snapshot = () => ({ elements, shapes, images, qrPos, backgroundUrl, canvasSize });
   const restore = (state) => {
@@ -636,6 +719,13 @@ export default function DesignEditorPage({ initialKind } = {}) {
     setPinMode(false);
     setPendingPinPos(null);
     setOpenPinCommentId(null);
+    if (typeof window !== 'undefined' && organizationCode) {
+      const draftKey = `ebadge_design_draft_${organizationCode || 'default'}`;
+      try { window.localStorage.removeItem(draftKey); } catch {}
+      const url = new URL(window.location.href);
+      url.searchParams.delete('code');
+      window.history.replaceState(null, '', url.toString());
+    }
     companyAssetsSeededRef.current = false;
     seedCompanyAssets(companyAssets, size, targetKind, organizationInfo);
   };
@@ -645,6 +735,11 @@ export default function DesignEditorPage({ initialKind } = {}) {
     setPinMode(false);
     setPendingPinPos(null);
     setOpenPinCommentId(null);
+    if (typeof window !== 'undefined' && design.design_code) {
+      const url = new URL(window.location.href);
+      url.searchParams.set('code', design.design_code);
+      window.history.replaceState(null, '', url.toString());
+    }
     const url = design.main_template_url || design.template_url || '';
     // Resolve the real canvas size before computing the QR's default
     // fallback position below, so a design saved without QR_CODE.X/Y (older
@@ -1060,7 +1155,7 @@ export default function DesignEditorPage({ initialKind } = {}) {
             ? `SVG added. ${json.removed.length} unsafe element(s) were removed.`
             : 'SVG added.');
         } else {
-          setStatusMessage(isPdf ? 'PDF converted and added.' : 'Image uploaded.');
+          setStatusMessage(isPdf ? 'PDF converted & draft saved.' : 'Image uploaded & draft saved.');
         }
       }
     } catch (err) {
@@ -1170,9 +1265,19 @@ export default function DesignEditorPage({ initialKind } = {}) {
         throw new Error(json.message || 'Failed to save template');
       }
       setStatusMessage(trigger === 'autosave' ? 'Autosaved' : isUpdate ? 'Template updated.' : 'Template created.');
+      const finalCode = isUpdate ? activeDesignCode : json.data.design_code;
       if (!isUpdate) setActiveDesignCode(json.data.design_code);
       setDesignStatus(json.data.status || 'draft');
       if (typeof json.data.current_version === 'number') setCurrentVersion(json.data.current_version);
+      if (typeof window !== 'undefined') {
+        const draftKey = `ebadge_design_draft_${organizationCode || 'default'}`;
+        try { window.localStorage.removeItem(draftKey); } catch {}
+        if (finalCode) {
+          const url = new URL(window.location.href);
+          url.searchParams.set('code', finalCode);
+          window.history.replaceState(null, '', url.toString());
+        }
+      }
       // This save's own resulting state change (new current_version etc.)
       // must not immediately re-trigger the autosave effect below.
       skipNextAutosaveRef.current = true;
