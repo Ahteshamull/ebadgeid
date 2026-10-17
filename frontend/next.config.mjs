@@ -30,10 +30,30 @@ const nextConfig = {
     // matching comment on SAML_BACKEND_URL). See docker-compose.yml's app
     // service for the real build-time value (the backend's address on the
     // docker network, not localhost).
+    async redirects() {
+      return [
+        {
+          source: '/verify/:credential_code',
+          destination: '/verifications/credentials/:credential_code',
+          permanent: false,
+        },
+        {
+          source: '/verification/:credential_code',
+          destination: '/verifications/credentials/:credential_code',
+          permanent: false,
+        },
+        {
+          source: '/credentials/verify/:credential_code',
+          destination: '/verifications/credentials/:credential_code',
+          permanent: false,
+        },
+      ];
+    },
     async rewrites() {
-      const backend = (process.env.SAML_BACKEND_URL || 'http://localhost:5000').replace(/\/$/, '');
+      const backend = (process.env.SAML_BACKEND_URL || process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/api\/?$/, '') || 'http://localhost:5000').replace(/\/$/, '');
       return [
         { source: '/api/auth/saml/:path*', destination: `${backend}/api/auth/saml/:path*` },
+        { source: '/api/credentials/by-code/:path*', destination: `${backend}/api/credentials/by-code/:path*` },
       ];
     },
     compiler: {

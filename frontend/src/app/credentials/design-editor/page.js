@@ -6,12 +6,13 @@ import {
   ArrowUp, ArrowDown, Grid3X3, Group, Ungroup, ZoomIn, ZoomOut, Upload, Download, ChevronDown,
   Square, Circle as CircleIcon, Minus, Sparkles, History, MessageSquare, Users, X as XIcon, RotateCw,
   Linkedin, Globe, Archive, ArchiveRestore, Copy, FileCheck, Share2, Palette, Building, Signature,
-  FileText, Award,
+  FileText, Award, ArrowLeft, Eye, AlertCircle, CheckCircle2,
 } from 'lucide-react';
 import { apiFetch, API_BASE_URL } from '@/lib/api';
 import { useSession } from '@/hooks/use-session';
 import { assignGroup, clampZoom, reorderLayer } from '@/lib/editor-utils.mjs';
 import { TEMPLATE_LIBRARY } from '@/lib/template-library';
+import { validateAssetFile, cleanAssetName } from '@/lib/asset-upload-utils.mjs';
 
 // Visual certificate/badge template editor — drag & drop, snap-to-alignment
 // guides, live preview, reusable templates. Built on top of the /api/designs
@@ -40,9 +41,15 @@ const SHAPE_DEFAULTS = {
 };
 // Preview-only verification URL — real credentials get their real
 // verification URL (and real QR) baked in server-side at issuance, see
-// certificateController.js. This is purely so the editor's canvas shows an
-// actual scannable QR code instead of a gray placeholder box.
-const QR_PREVIEW_DATA = 'https://ebadgeid.com/verifications/credentials/PREVIEW';
+// certificateController.js. This uses the current origin dynamically so
+// scanning the canvas QR directly from the screen in dev or prod opens a
+// functional preview page instead of a 404 domain.
+function getPreviewVerificationUrl() {
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return `${window.location.origin}/verifications/credentials/PREVIEW`;
+  }
+  return 'https://app.ebadgeid.com/verifications/credentials/PREVIEW';
+}
 
 const FIELD_TYPES = [
   { value: 'recipient_name', label: 'Recipient name (auto-filled at issuance)' },
@@ -192,6 +199,13 @@ export default function DesignEditorPage({ initialKind } = {}) {
   const [publishing, setPublishing] = useState(false);
   const [reviewInfo, setReviewInfo] = useState({ submitted_by: null, rejection_reason: null });
   const [reviewing, setReviewing] = useState(false);
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectionReason, setRejectionReason] = useState('');
+  const [rejectModalError, setRejectModalError] = useState('');
+  const [templateToDelete, setTemplateToDelete] = useState(null);
+  const [deletingTemplate, setDeletingTemplate] = useState(false);
+  const [versionToRevert, setVersionToRevert] = useState(null);
+  const [revertingVersion, setRevertingVersion] = useState(false);
   const autosaveTimerRef = useRef(null);
   const skipNextAutosaveRef = useRef(true);
   const [templateName, setTemplateName] = useState(initialKind === 'badge' ? 'Untitled badge' : 'Untitled certificate');
@@ -1100,7 +1114,7 @@ export default function DesignEditorPage({ initialKind } = {}) {
         // Placeholder — the real verification URL is generated per
         // credential at issuance time (reserveCredentialCode + the actual
         // credential_code), not here. See credentials/page.js.
-        ecoding_data: 'https://ebadgeid.com/verifications/credentials/PREVIEW',
+        ecoding_data: getPreviewVerificationUrl(),
         X: qrPos.x,
         Y: qrPos.y,
       },
@@ -1259,23 +1273,39 @@ export default function DesignEditorPage({ initialKind } = {}) {
     }
   };
 
-  const rejectDesign = async () => {
+  const openRejectModal = () => {
     if (!activeDesignCode) return;
-    const reason = window.prompt('Why is this template being sent back? (shown to whoever submitted it)');
-    if (!reason || !reason.trim()) return;
+    setRejectionReason('');
+    setRejectModalError('');
+    setShowRejectModal(true);
+  };
+
+  const submitRejectDesign = async () => {
+    if (!activeDesignCode) return;
+    if (!rejectionReason.trim()) {
+      setRejectModalError('Please state a reason so the template author knows what to adjust.');
+      return;
+    }
     setReviewing(true);
+    setRejectModalError('');
     setStatusMessage('');
     try {
       // Same self-rejection 403 case as approveDesign above.
-      const res = await apiFetch(`/designs/${activeDesignCode}/reject`, { method: 'POST', body: JSON.stringify({ reason: reason.trim() }), redirectOnUnauthorized: false });
+      const res = await apiFetch(`/designs/${activeDesignCode}/reject`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: rejectionReason.trim() }),
+        redirectOnUnauthorized: false
+      });
       const json = await res.json();
       if (!res.ok || json.success === false) throw new Error(json.message || 'Failed to reject template');
       setDesignStatus(json.data.status);
       setReviewInfo({ submitted_by: null, rejection_reason: json.data.rejection_reason });
       setStatusMessage('Template sent back to draft.');
+      setShowRejectModal(false);
       loadTemplates();
     } catch (err) {
       console.error(err);
+      setRejectModalError(err.message || 'Failed to reject template');
       setStatusMessage(`Error: ${err.message}`);
     } finally {
       setReviewing(false);
@@ -1472,7 +1502,7 @@ export default function DesignEditorPage({ initialKind } = {}) {
     // a template that was never issued (see certificateController.js).
     // This is real QR data, not a decorative gray box, so the preview
     // actually shows what a QR will look like on the finished certificate.
-    const qrDataUrl = await QRCode.toDataURL(QR_PREVIEW_DATA, { width: 256, margin: 0 });
+    const qrDataUrl = await QRCode.toDataURL(getPreviewVerificationUrl(), { width: 256, margin: 0 });
     const qrImg = await new Promise((resolve) => {
       const image = new window.Image();
       image.onload = () => resolve(image);
@@ -1530,14 +1560,27 @@ export default function DesignEditorPage({ initialKind } = {}) {
     }
   };
 
-  const deleteTemplate = async (designCode) => {
-    if (!window.confirm('Delete this template? This cannot be undone.')) return;
+  const promptDeleteTemplate = (template) => {
+    setTemplateToDelete(template);
+  };
+
+  const confirmDeleteTemplate = async () => {
+    if (!templateToDelete) return;
+    setDeletingTemplate(true);
     try {
-      await apiFetch(`/designs/${designCode}`, { method: 'DELETE' });
-      if (activeDesignCode === designCode) resetCanvas();
+      const targetCode = templateToDelete.design_code;
+      await apiFetch(`/designs/${targetCode}`, { method: 'DELETE' });
+      if (activeDesignCode === targetCode) resetCanvas();
+      setStatusMessage(`Template "${templateToDelete.credential_title || targetCode}" deleted.`);
+      setTimeout(() => setStatusMessage(''), 3000);
+      setTemplateToDelete(null);
       loadTemplates();
     } catch (err) {
       console.error('Failed to delete template:', err);
+      setStatusMessage(`Failed to delete template: ${err.message}`);
+      setTimeout(() => setStatusMessage(''), 4000);
+    } finally {
+      setDeletingTemplate(false);
     }
   };
 
@@ -1546,7 +1589,7 @@ export default function DesignEditorPage({ initialKind } = {}) {
   // does, at issuance time) instead of showing a gray placeholder box.
   const [qrPreviewDataUrl, setQrPreviewDataUrl] = useState('');
   useEffect(() => {
-    QRCode.toDataURL(QR_PREVIEW_DATA, { width: 256, margin: 0 }).then(setQrPreviewDataUrl).catch(() => {});
+    QRCode.toDataURL(getPreviewVerificationUrl(), { width: 256, margin: 0 }).then(setQrPreviewDataUrl).catch(() => {});
   }, []);
 
   // --- Asset library (uploaded images + AI-generated backgrounds/stickers) ---
@@ -1555,24 +1598,46 @@ export default function DesignEditorPage({ initialKind } = {}) {
   const [imageAssets, setImageAssets] = useState([]);
   const [loadingAssets, setLoadingAssets] = useState(false);
   const [assetUploading, setAssetUploading] = useState(false);
+  const [assetUploadError, setAssetUploadError] = useState('');
+  const [assetUploadSuccess, setAssetUploadSuccess] = useState('');
+  const [previewingAsset, setPreviewingAsset] = useState(null);
+  const [previewingAssetDimensions, setPreviewingAssetDimensions] = useState(null);
+  const [deletingAssetId, setDeletingAssetId] = useState(null);
   const [aiPrompt, setAiPrompt] = useState('');
   const [generatingAi, setGeneratingAi] = useState(false);
   const assetFileInputRef = useRef(null);
 
+  useEffect(() => {
+    if (previewingAsset) {
+      probeImageSize(previewingAsset.url).then(setPreviewingAssetDimensions);
+    } else {
+      setPreviewingAssetDimensions(null);
+    }
+  }, [previewingAsset]);
+
   const loadImageAssets = async () => {
     setLoadingAssets(true);
+    setAssetUploadError('');
     try {
       const res = await apiFetch('/assets?asset_type=image');
       const json = await res.json();
       setImageAssets(json.data || []);
     } catch (err) {
       console.error('Failed to load asset library:', err);
+      setAssetUploadError('Failed to load assets: ' + (err.message || 'Server error'));
     } finally {
       setLoadingAssets(false);
     }
   };
 
-  useEffect(() => { if (showAssetLibrary) loadImageAssets(); }, [showAssetLibrary]);  
+  useEffect(() => {
+    if (showAssetLibrary) {
+      setPreviewingAsset(null);
+      setAssetUploadError('');
+      setAssetUploadSuccess('');
+      loadImageAssets();
+    }
+  }, [showAssetLibrary]);  
 
   const registerAsset = async ({ asset_type, name, url, mime_type, original_filename }) => {
     const res = await apiFetch('/assets', {
@@ -1587,7 +1652,19 @@ export default function DesignEditorPage({ initialKind } = {}) {
   const uploadLibraryImage = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
+
+    // Validate supported file format and size
+    const validation = validateAssetFile(file);
+    if (!validation.valid) {
+      setAssetUploadError(validation.error);
+      if (assetFileInputRef.current) assetFileInputRef.current.value = '';
+      return;
+    }
+
     setAssetUploading(true);
+    setAssetUploadError('');
+    setAssetUploadSuccess('');
+
     try {
       const formData = new FormData();
       formData.append('file', file);
@@ -1596,16 +1673,59 @@ export default function DesignEditorPage({ initialKind } = {}) {
       const json = await res.json();
       if (!res.ok) throw new Error(json.message || 'Upload failed');
       const uploadedUrl = resolveUploadUrl(json.url);
-      const name = window.prompt('Name this asset (for reuse later):', file.name.replace(/\.[^.]+$/, '')) || file.name;
-      await registerAsset({ asset_type: 'image', name, url: uploadedUrl, mime_type: file.type || 'image/png', original_filename: file.name });
+
+      // Clean default name derived from filename without disruptive browser alert
+      let name = cleanAssetName(file.name);
+      try {
+        await registerAsset({
+          asset_type: 'image',
+          name,
+          url: uploadedUrl,
+          mime_type: file.type || 'image/png',
+          original_filename: file.name
+        });
+      } catch (regErr) {
+        if (regErr.message && regErr.message.includes('already exists')) {
+          name = `${name} (${Date.now().toString().slice(-4)})`;
+          await registerAsset({
+            asset_type: 'image',
+            name,
+            url: uploadedUrl,
+            mime_type: file.type || 'image/png',
+            original_filename: file.name
+          });
+        } else {
+          throw regErr;
+        }
+      }
+
+      setAssetUploadSuccess(`"${name}" was added to your library!`);
+      setTimeout(() => setAssetUploadSuccess(''), 4000);
       await loadImageAssets();
     } catch (err) {
       console.error('Asset upload failed:', err);
-      setStatusMessage(`Upload failed: ${err.message}`);
-      setTimeout(() => setStatusMessage(''), 3000);
+      setAssetUploadError(err.message || 'Upload failed');
     } finally {
       setAssetUploading(false);
       if (assetFileInputRef.current) assetFileInputRef.current.value = '';
+    }
+  };
+
+  const deleteLibraryAsset = async (assetId) => {
+    setDeletingAssetId(assetId);
+    setAssetUploadError('');
+    try {
+      const res = await apiFetch(`/assets/${assetId}`, { method: 'DELETE' });
+      const json = await res.json();
+      if (!res.ok || json.success === false) throw new Error(json.message || 'Failed to delete asset');
+      setImageAssets((prev) => prev.filter((a) => a._id !== assetId));
+      if (previewingAsset?._id === assetId) setPreviewingAsset(null);
+      setAssetUploadSuccess('Asset deleted from library.');
+      setTimeout(() => setAssetUploadSuccess(''), 3000);
+    } catch (err) {
+      setAssetUploadError(err.message || 'Failed to delete asset');
+    } finally {
+      setDeletingAssetId(null);
     }
   };
 
@@ -1671,22 +1791,30 @@ export default function DesignEditorPage({ initialKind } = {}) {
     }
   };
 
-  const revertToVersion = async (versionNumber) => {
-    if (!activeDesignCode) return;
-    if (!window.confirm(`Revert to version ${versionNumber}? This creates a new version with that content — nothing is deleted.`)) return;
+  const promptRevertToVersion = (versionNumber) => {
+    setVersionToRevert(versionNumber);
+  };
+
+  const confirmRevertVersion = async () => {
+    if (!activeDesignCode || versionToRevert === null) return;
+    setRevertingVersion(true);
     try {
-      const res = await apiFetch(`/designs/${activeDesignCode}/versions/${versionNumber}/revert`, { method: 'POST' });
+      const res = await apiFetch(`/designs/${activeDesignCode}/versions/${versionToRevert}/revert`, { method: 'POST' });
       const json = await res.json();
       if (!res.ok || json.success === false) throw new Error(json.message || 'Revert failed');
       await loadTemplateIntoEditor(json.data);
+      const revertedNum = versionToRevert;
+      setVersionToRevert(null);
       setShowVersionHistory(false);
       loadTemplates();
-      setStatusMessage(`Reverted to version ${versionNumber}.`);
+      setStatusMessage(`Reverted to version ${revertedNum}.`);
       setTimeout(() => setStatusMessage(''), 3000);
     } catch (err) {
       console.error('Revert failed:', err);
       setStatusMessage(`Revert failed: ${err.message}`);
       setTimeout(() => setStatusMessage(''), 3000);
+    } finally {
+      setRevertingVersion(false);
     }
   };
 
@@ -1891,12 +2019,20 @@ export default function DesignEditorPage({ initialKind } = {}) {
       const json = await res.json();
       if (!res.ok) throw new Error(json.message || 'Font upload failed');
       const uploadedUrl = resolveUploadUrl(json.url);
-      const defaultName = file.name.replace(/\.[^.]+$/, '');
-      const name = window.prompt('Name this font (used in the font picker):', defaultName) || defaultName;
-      await registerAsset({ asset_type: 'font', name, url: uploadedUrl, mime_type: json.mime, original_filename: file.name });
+      let name = cleanAssetName(file.name);
+      try {
+        await registerAsset({ asset_type: 'font', name, url: uploadedUrl, mime_type: json.mime, original_filename: file.name });
+      } catch (regErr) {
+        if (regErr.message && regErr.message.includes('already exists')) {
+          name = `${name} (${Date.now().toString().slice(-4)})`;
+          await registerAsset({ asset_type: 'font', name, url: uploadedUrl, mime_type: json.mime, original_filename: file.name });
+        } else {
+          throw regErr;
+        }
+      }
       await loadCustomFonts();
       if (selected) updateSelected({ font_family: name });
-      setStatusMessage('Font uploaded.');
+      setStatusMessage(`Font "${name}" uploaded successfully.`);
       setTimeout(() => setStatusMessage(''), 3000);
     } catch (err) {
       console.error('Font upload failed:', err);
@@ -2096,7 +2232,7 @@ export default function DesignEditorPage({ initialKind } = {}) {
                     {t.credential_title || t.design_code}
                   </span>
                   <button
-                    onClick={(e) => { e.stopPropagation(); deleteTemplate(t.design_code); }}
+                    onClick={(e) => { e.stopPropagation(); promptDeleteTemplate(t); }}
                     aria-label={`Delete template ${t.credential_title || t.design_code}`}
                     className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-destructive hover:opacity-80"
                   >
@@ -2199,7 +2335,7 @@ export default function DesignEditorPage({ initialKind } = {}) {
                   Approve
                 </button>
                 <button
-                  onClick={rejectDesign}
+                  onClick={openRejectModal}
                   disabled={reviewing}
                   title="Send back to draft with a reason"
                   className="flex items-center gap-1 border px-3 py-2 rounded-lg text-sm text-rose-700 border-rose-300 hover:bg-rose-50 disabled:opacity-50"
@@ -2914,95 +3050,209 @@ export default function DesignEditorPage({ initialKind } = {}) {
       </aside>
 
       {showAssetLibrary && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-6" onClick={() => setShowAssetLibrary(false)}>
-          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-6" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-900">Asset library</h2>
-              <button onClick={() => setShowAssetLibrary(false)} className="text-gray-400 hover:text-gray-600"><XIcon className="w-5 h-5" /></button>
-            </div>
-            <div className="flex gap-2 mb-4 border-b">
-              <button onClick={() => setAssetLibraryTab('library')} className={`px-3 py-2 text-sm font-medium border-b-2 ${assetLibraryTab === 'library' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500'}`}>Your assets</button>
-              <button onClick={() => setAssetLibraryTab('generate')} className={`px-3 py-2 text-sm font-medium border-b-2 flex items-center gap-1 ${assetLibraryTab === 'generate' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500'}`}><Sparkles className="w-3.5 h-3.5" /> Generate with AI</button>
-            </div>
-
-            {assetLibraryTab === 'library' && (
-              <div>
-                <input ref={assetFileInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml,.png,.jpg,.jpeg,.webp,.svg" onChange={uploadLibraryImage} className="hidden" />
-                <button
-                  onClick={() => assetFileInputRef.current?.click()}
-                  disabled={assetUploading}
-                  className="mb-4 flex items-center gap-2 border rounded-lg px-3 py-2 text-sm disabled:opacity-50"
-                >
-                  {assetUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-                  Upload icon, sticker, or background
-                </button>
-                {brandKit?.logo_url && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center z-50 p-4 sm:p-6" onClick={() => setShowAssetLibrary(false)}>
+          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[85vh] flex flex-col p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                {previewingAsset && (
                   <button
-                    onClick={() => { insertBrandLogo(); setShowAssetLibrary(false); }}
-                    className="mb-4 ml-2 flex items-center gap-2 border rounded-lg px-3 py-2 text-sm"
+                    onClick={() => setPreviewingAsset(null)}
+                    className="p-1 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition"
+                    title="Back to all assets"
                   >
-                    <Palette className="w-4 h-4" />
-                    Insert brand logo
+                    <ArrowLeft className="w-5 h-5" />
                   </button>
                 )}
-                {(companyAssets.logo || companyAssets.signature) && (
-                  <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
-                    <p className="mb-2 text-xs font-medium text-slate-600">Company assets</p>
-                    <div className="flex flex-wrap gap-2">
-                      {companyAssets.logo && (
-                        <button onClick={() => { insertCompanyAsset(companyAssets.logo); setShowAssetLibrary(false); }} className="flex items-center gap-2 border rounded-lg bg-white px-3 py-2 text-sm hover:bg-slate-50">
-                          <Building className="w-4 h-4" /> Insert company logo
-                        </button>
-                      )}
-                      {companyAssets.signature && (
-                        <button onClick={() => { insertCompanyAsset(companyAssets.signature); setShowAssetLibrary(false); }} className="flex items-center gap-2 border rounded-lg bg-white px-3 py-2 text-sm hover:bg-slate-50">
-                          <Signature className="w-4 h-4" /> Insert admin signature
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )}
-                {loadingAssets ? (
-                  <p className="text-sm text-gray-500">Loading…</p>
-                ) : imageAssets.length === 0 ? (
-                  <p className="text-sm text-gray-500">No assets saved yet — upload one, or generate one with AI.</p>
-                ) : (
-                  <div className="grid grid-cols-3 gap-3">
-                    {imageAssets.map((asset) => (
-                      <div key={asset._id} className="border rounded-lg overflow-hidden">
-                        <img src={asset.url} alt={asset.name} className="w-full aspect-square object-contain bg-gray-50" />
-                        <p className="text-xs font-medium text-gray-800 px-2 pt-1 truncate">{asset.name}</p>
-                        <div className="flex gap-1 p-2 pt-1">
-                          <button onClick={() => insertAssetAsImage(asset)} className="flex-1 text-xs bg-indigo-600 text-white rounded px-2 py-1 hover:bg-indigo-700">Insert</button>
-                          <button onClick={() => applyAssetAsBackground(asset)} className="flex-1 text-xs border rounded px-2 py-1 hover:bg-gray-50">Background</button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                <h2 className="text-lg font-semibold text-gray-900">
+                  {previewingAsset ? 'Asset Preview' : 'Asset library'}
+                </h2>
+              </div>
+              <button onClick={() => setShowAssetLibrary(false)} className="text-gray-400 hover:text-gray-600 p-1 rounded-md hover:bg-gray-100 transition"><XIcon className="w-5 h-5" /></button>
+            </div>
+
+            {assetUploadError && (
+              <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2 text-xs text-red-700">
+                <AlertCircle className="w-4 h-4 shrink-0 text-red-500 mt-0.5" />
+                <span>{assetUploadError}</span>
               </div>
             )}
 
-            {assetLibraryTab === 'generate' && (
-              <div className="space-y-3">
-                <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Describe the image or background</label>
-                <textarea
-                  rows={3}
-                  value={aiPrompt}
-                  onChange={(e) => setAiPrompt(e.target.value)}
-                  placeholder="e.g. a subtle gold laurel wreath on a transparent background"
-                  className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 resize-y"
-                />
-                <button
-                  onClick={generateAiImage}
-                  disabled={generatingAi || !aiPrompt.trim()}
-                  className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
-                >
-                  {generatingAi ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                  {generatingAi ? 'Generating…' : 'Generate'}
-                </button>
-                <p className="text-[11px] text-gray-400">Generated images are saved to Your assets automatically, ready to insert or reuse on other templates.</p>
+            {assetUploadSuccess && (
+              <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg flex items-start gap-2 text-xs text-green-700">
+                <CheckCircle2 className="w-4 h-4 shrink-0 text-green-500 mt-0.5" />
+                <span>{assetUploadSuccess}</span>
               </div>
+            )}
+
+            {previewingAsset ? (
+              <div className="py-4 space-y-4 overflow-y-auto">
+                <div className="w-full bg-slate-50 border rounded-xl p-4 flex items-center justify-center min-h-[220px] max-h-[300px]">
+                  <img
+                    src={previewingAsset.url}
+                    alt={previewingAsset.name}
+                    className="max-h-[260px] max-w-full object-contain drop-shadow-xs"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-base font-semibold text-gray-900">{previewingAsset.name}</h3>
+                  <p className="text-xs text-gray-500">
+                    {previewingAssetDimensions ? `${previewingAssetDimensions.w} × ${previewingAssetDimensions.h} px • ` : ''}
+                    {previewingAsset.original_filename || 'Uploaded image'}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2 pt-2 border-t border-gray-100">
+                  <button
+                    onClick={() => insertAssetAsImage(previewingAsset)}
+                    className="flex-1 min-w-[140px] flex items-center justify-center gap-1.5 py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition"
+                  >
+                    <Plus className="w-4 h-4" /> Insert into Design
+                  </button>
+                  <button
+                    onClick={() => applyAssetAsBackground(previewingAsset)}
+                    className="flex-1 min-w-[140px] flex items-center justify-center gap-1.5 py-2 px-3 border border-gray-300 hover:bg-gray-50 text-gray-700 rounded-lg text-sm font-medium transition"
+                  >
+                    <ImageIcon className="w-4 h-4" /> Set as Background
+                  </button>
+                  <button
+                    onClick={() => deleteLibraryAsset(previewingAsset._id)}
+                    disabled={deletingAssetId === previewingAsset._id}
+                    className="flex items-center justify-center gap-1.5 py-2 px-3 border border-red-200 hover:bg-red-50 text-red-600 rounded-lg text-sm font-medium transition disabled:opacity-50"
+                  >
+                    {deletingAssetId === previewingAsset._id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="flex gap-2 my-3 border-b border-gray-100">
+                  <button onClick={() => setAssetLibraryTab('library')} className={`px-3 py-2 text-sm font-medium border-b-2 transition ${assetLibraryTab === 'library' ? 'border-indigo-600 text-indigo-600 font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Your assets</button>
+                  <button onClick={() => setAssetLibraryTab('generate')} className={`px-3 py-2 text-sm font-medium border-b-2 flex items-center gap-1 transition ${assetLibraryTab === 'generate' ? 'border-indigo-600 text-indigo-600 font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700'}`}><Sparkles className="w-3.5 h-3.5" /> Generate with AI</button>
+                </div>
+
+                <div className="overflow-y-auto flex-1 pr-1">
+                  {assetLibraryTab === 'library' && (
+                    <div className="space-y-4">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <input
+                          ref={assetFileInputRef}
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp,image/svg+xml,.png,.jpg,.jpeg,.webp,.svg"
+                          onChange={uploadLibraryImage}
+                          className="hidden"
+                        />
+                        <button
+                          onClick={() => assetFileInputRef.current?.click()}
+                          disabled={assetUploading}
+                          className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-3.5 py-2 text-sm font-medium shadow-xs disabled:opacity-50 transition"
+                        >
+                          {assetUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                          {assetUploading ? 'Uploading & validating…' : 'Upload image (PNG, JPG, SVG, WEBP)'}
+                        </button>
+                        {brandKit?.logo_url && (
+                          <button
+                            onClick={() => { insertBrandLogo(); setShowAssetLibrary(false); }}
+                            className="flex items-center gap-2 border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 transition"
+                          >
+                            <Palette className="w-4 h-4" />
+                            Insert brand logo
+                          </button>
+                        )}
+                      </div>
+
+                      {(companyAssets.logo || companyAssets.signature) && (
+                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                          <p className="mb-2 text-xs font-semibold text-slate-600 uppercase tracking-wide">Company assets</p>
+                          <div className="flex flex-wrap gap-2">
+                            {companyAssets.logo && (
+                              <button onClick={() => { insertCompanyAsset(companyAssets.logo); setShowAssetLibrary(false); }} className="flex items-center gap-2 border rounded-lg bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-slate-50 shadow-2xs">
+                                <Building className="w-3.5 h-3.5" /> Insert company logo
+                              </button>
+                            )}
+                            {companyAssets.signature && (
+                              <button onClick={() => { insertCompanyAsset(companyAssets.signature); setShowAssetLibrary(false); }} className="flex items-center gap-2 border rounded-lg bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-slate-50 shadow-2xs">
+                                <Signature className="w-3.5 h-3.5" /> Insert admin signature
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {loadingAssets ? (
+                        <div className="flex items-center justify-center py-12 gap-2 text-sm text-gray-500">
+                          <Loader2 className="w-5 h-5 animate-spin text-indigo-600" />
+                          <span>Loading asset library…</span>
+                        </div>
+                      ) : imageAssets.length === 0 ? (
+                        <div className="text-center py-12 border-2 border-dashed border-gray-200 rounded-xl bg-gray-50/50">
+                          <ImageIcon className="w-10 h-10 text-gray-400 mx-auto mb-2" />
+                          <p className="text-sm font-medium text-gray-700">No assets saved yet</p>
+                          <p className="text-xs text-gray-500 mt-1">Upload graphics or icons up to 10 MB, or generate with AI.</p>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                          {imageAssets.map((asset) => (
+                            <div key={asset._id} className="group border border-gray-200 hover:border-indigo-400 rounded-lg overflow-hidden bg-white shadow-2xs transition-all flex flex-col">
+                              <div
+                                onClick={() => setPreviewingAsset(asset)}
+                                className="relative aspect-square bg-slate-50 flex items-center justify-center p-2 cursor-pointer group-hover:bg-indigo-50/30 transition"
+                              >
+                                <img src={asset.url} alt={asset.name} className="max-w-full max-h-full object-contain" />
+                                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
+                                  <span className="bg-white/90 text-gray-800 text-xs font-semibold py-1 px-2.5 rounded-full shadow-xs flex items-center gap-1">
+                                    <Eye className="w-3 h-3" /> Preview
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="p-2 flex-1 flex flex-col justify-between">
+                                <p className="text-xs font-medium text-gray-800 truncate" title={asset.name}>{asset.name}</p>
+                                <div className="flex gap-1.5 mt-2">
+                                  <button
+                                    onClick={() => setPreviewingAsset(asset)}
+                                    className="flex-1 flex items-center justify-center gap-1 text-[11px] font-medium border border-gray-300 text-gray-700 rounded py-1 hover:bg-gray-50 transition"
+                                    title="View preview"
+                                  >
+                                    <Eye className="w-3 h-3" /> Preview
+                                  </button>
+                                  <button
+                                    onClick={() => insertAssetAsImage(asset)}
+                                    className="flex-1 flex items-center justify-center gap-1 text-[11px] font-medium bg-indigo-600 text-white rounded py-1 hover:bg-indigo-700 transition"
+                                    title="Add to canvas"
+                                  >
+                                    <Plus className="w-3 h-3" /> Insert
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {assetLibraryTab === 'generate' && (
+                    <div className="space-y-3 py-1">
+                      <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Describe the image or background</label>
+                      <textarea
+                        rows={3}
+                        value={aiPrompt}
+                        onChange={(e) => setAiPrompt(e.target.value)}
+                        placeholder="e.g. a subtle gold laurel wreath on a transparent background"
+                        className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 resize-y focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                      <button
+                        onClick={generateAiImage}
+                        disabled={generatingAi || !aiPrompt.trim()}
+                        className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition"
+                      >
+                        {generatingAi ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                        {generatingAi ? 'Generating…' : 'Generate'}
+                      </button>
+                      <p className="text-[11px] text-gray-400">Generated images are saved to Your assets automatically, ready to preview, insert or reuse on other templates.</p>
+                    </div>
+                  )}
+                </div>
+              </>
             )}
           </div>
         </div>
@@ -3027,7 +3277,7 @@ export default function DesignEditorPage({ initialKind } = {}) {
                       <p className="text-sm font-medium text-gray-900">Version {v.version_number}</p>
                       <p className="text-xs text-gray-500">{v.created_by} · {new Date(v.createdAt).toLocaleString()}</p>
                     </div>
-                    <button onClick={() => revertToVersion(v.version_number)} className="text-xs border rounded px-3 py-1.5 hover:bg-gray-50">Revert</button>
+                    <button onClick={() => promptRevertToVersion(v.version_number)} className="text-xs border rounded px-3 py-1.5 hover:bg-gray-50 transition">Revert</button>
                   </div>
                 ))}
               </div>
@@ -3290,6 +3540,154 @@ export default function DesignEditorPage({ initialKind } = {}) {
                   </div>
                 </button>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showRejectModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-6" onClick={() => !reviewing && setShowRejectModal(false)}>
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 animate-in fade-in-50 zoom-in-95" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-lg bg-rose-50 text-rose-600">
+                  <AlertCircle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-base font-semibold text-gray-900">Request Changes</h2>
+                  <p className="text-xs text-gray-500">Send template back to draft</p>
+                </div>
+              </div>
+              <button
+                onClick={() => !reviewing && setShowRejectModal(false)}
+                disabled={reviewing}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-md hover:bg-gray-100 transition disabled:opacity-50"
+              >
+                <XIcon className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-gray-600 mb-3">
+              Please provide the reason this template is being sent back. This note will be shown to the author who submitted it for review.
+            </p>
+
+            {rejectModalError && (
+              <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2 text-xs text-red-700">
+                <AlertCircle className="w-4 h-4 shrink-0 text-red-500 mt-0.5" />
+                <span>{rejectModalError}</span>
+              </div>
+            )}
+
+            <textarea
+              rows={4}
+              value={rejectionReason}
+              onChange={(e) => {
+                setRejectionReason(e.target.value);
+                if (rejectModalError) setRejectModalError('');
+              }}
+              placeholder="e.g. Please increase the font size of the recipient name and align the QR code to the bottom right..."
+              className="w-full text-sm border border-gray-300 rounded-lg p-3 resize-y focus:outline-none focus:ring-2 focus:ring-rose-500 focus:border-rose-500"
+              disabled={reviewing}
+            />
+
+            <div className="flex justify-end gap-2 mt-4 pt-3 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={() => setShowRejectModal(false)}
+                disabled={reviewing}
+                className="px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50 font-medium transition disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submitRejectDesign}
+                disabled={reviewing || !rejectionReason.trim()}
+                className="flex items-center gap-2 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-sm font-medium shadow-xs transition disabled:opacity-50"
+              >
+                {reviewing ? <Loader2 className="w-4 h-4 animate-spin" /> : <AlertCircle className="w-4 h-4" />}
+                {reviewing ? 'Sending back…' : 'Send Back to Draft'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {templateToDelete && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-6" onClick={() => !deletingTemplate && setTemplateToDelete(null)}>
+          <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full p-6 animate-in fade-in-50 zoom-in-95" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-3">
+              <div className="p-2.5 rounded-full bg-red-100 text-red-600">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-gray-900">Delete Template</h3>
+                <p className="text-xs text-gray-500">This action cannot be undone</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-gray-600 mb-4 leading-relaxed">
+              Are you sure you want to delete <span className="font-semibold text-gray-900">"{templateToDelete.credential_title || templateToDelete.design_code}"</span>? All unsaved changes and associated draft data will be permanently removed.
+            </p>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={() => setTemplateToDelete(null)}
+                disabled={deletingTemplate}
+                className="px-3.5 py-2 border border-gray-300 rounded-lg text-xs font-medium text-gray-700 hover:bg-gray-50 transition disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteTemplate}
+                disabled={deletingTemplate}
+                className="flex items-center gap-1.5 px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-medium shadow-xs transition disabled:opacity-50"
+              >
+                {deletingTemplate ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                {deletingTemplate ? 'Deleting…' : 'Delete Template'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {versionToRevert !== null && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-6" onClick={() => !revertingVersion && setVersionToRevert(null)}>
+          <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full p-6 animate-in fade-in-50 zoom-in-95" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-3">
+              <div className="p-2.5 rounded-full bg-indigo-100 text-indigo-600">
+                <History className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-gray-900">Revert to Version {versionToRevert}</h3>
+                <p className="text-xs text-gray-500">Restore previous template content</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-gray-600 mb-4 leading-relaxed">
+              This will restore the template layout, elements and styles from <span className="font-semibold text-gray-900">Version {versionToRevert}</span>. A new version will be created with that content — nothing is deleted.
+            </p>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={() => setVersionToRevert(null)}
+                disabled={revertingVersion}
+                className="px-3.5 py-2 border border-gray-300 rounded-lg text-xs font-medium text-gray-700 hover:bg-gray-50 transition disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmRevertVersion}
+                disabled={revertingVersion}
+                className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-medium shadow-xs transition disabled:opacity-50"
+              >
+                {revertingVersion ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <History className="w-3.5 h-3.5" />}
+                {revertingVersion ? 'Reverting…' : 'Confirm Revert'}
+              </button>
             </div>
           </div>
         </div>

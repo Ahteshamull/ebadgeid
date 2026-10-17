@@ -38,9 +38,71 @@ const CredentialVerifyPage = () => {
 
   const verifyCredential = async () => {
     setLoading(true);
+
+    // Template design editor preview QR support:
+    // When an administrator or evaluator scans the QR code directly from the
+    // design editor canvas, display a functional preview state rather than a 404.
+    if (credential_code && credential_code.toString().trim().toUpperCase() === 'PREVIEW') {
+      const steps = [
+        { text: 'Looking up credential template…', ok: true },
+        { text: 'Checking template preview integrity…', ok: true },
+        { text: 'Template Status: Active & Ready for Issuance', ok: true },
+        { text: 'Verification preview ready', ok: true },
+      ];
+      for (let i = 0; i < steps.length; i++) {
+        setVerificationStep(i);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+      setCredentialData({
+        credential_code: 'PREVIEW-SAMPLE',
+        credential_title: 'Credential Design Template (Live Preview)',
+        credential_status: 'Issued',
+        credential_issue_date: new Date().toISOString(),
+        credential_expiry_date: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+        achiever_details: {
+          first_name: 'Sample',
+          last_name: 'Recipient',
+        },
+        organization_detail: {
+          name: 'Platform Organization (Template Preview)',
+          city: 'Digital City',
+          state: 'Online',
+          country: 'Global',
+        },
+        integrity_status: 'verified',
+        integrity_valid: true,
+        credential_blockchain_hashes: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+        _isPreview: true,
+        _steps: steps,
+      });
+      setLoading(false);
+      return;
+    }
+
     try {
-      const response = await fetch(`${API_BASE_URL}/credentials/by-code/${credential_code}`);
-      if (!response.ok) {
+      const codeParam = encodeURIComponent(credential_code);
+      let response;
+      // Try relative endpoint first (works on external devices via Next.js rewrite proxy)
+      try {
+        response = await fetch(`/api/credentials/by-code/${codeParam}`);
+      } catch (proxyErr) {
+        // Fall back to configured API_BASE_URL if relative fetch is unavailable
+        response = null;
+      }
+
+      if (!response || !response.ok) {
+        // Direct API call fallback
+        try {
+          const directResponse = await fetch(`${API_BASE_URL}/credentials/by-code/${codeParam}`);
+          if (directResponse.ok) {
+            response = directResponse;
+          }
+        } catch (directErr) {
+          // Keep response as null or failed response
+        }
+      }
+
+      if (!response || !response.ok) {
         setNotFound(true);
         setLoading(false);
         return;
@@ -176,6 +238,17 @@ const CredentialVerifyPage = () => {
   // stored hash no longer matches its stored data can't be trusted
   // regardless of what its status field says.
   const getStatusInfo = (credential) => {
+    if (credential?._isPreview) {
+      return {
+        icon: <CheckCircle className="w-8 h-8 text-blue-500" />,
+        text: 'Template Preview (Ready)',
+        bgColor: 'bg-blue-50 dark:bg-blue-950/20',
+        borderColor: 'border-blue-200 dark:border-blue-800',
+        textColor: 'text-blue-800 dark:text-blue-300',
+        description: 'This is a live template preview. Issued credentials will feature verifiable integrity signatures and official recipient details.',
+        showActions: false,
+      };
+    }
     // `integrity_status === 'failed'` means the hash genuinely does not match
     // and the record may have been altered. `'not_verifiable'` means the
     // credential predates reproducible content hashing (integrity_hash_version
@@ -187,7 +260,9 @@ const CredentialVerifyPage = () => {
       return {
         icon: <AlertTriangle className="w-8 h-8 text-red-600" />,
         text: 'Integrity Check Failed',
-        bgColor: 'bg-red-50', borderColor: 'border-red-300', textColor: 'text-red-900',
+        bgColor: 'bg-red-50 dark:bg-red-950/20',
+        borderColor: 'border-red-300 dark:border-red-800',
+        textColor: 'text-red-900 dark:text-red-300',
         description: "This record's data no longer matches its integrity hash — it may have been altered after issuance. Contact the issuing organization.",
         showActions: false,
       };
@@ -197,7 +272,10 @@ const CredentialVerifyPage = () => {
       case 'Claimed':
         return {
           icon: <CheckCircle className="w-8 h-8 text-green-500" />,
-          text: 'Verified', bgColor: 'bg-green-50', borderColor: 'border-green-200', textColor: 'text-green-800',
+          text: 'Verified',
+          bgColor: 'bg-green-50 dark:bg-green-950/20',
+          borderColor: 'border-green-200 dark:border-green-800',
+          textColor: 'text-green-800 dark:text-green-300',
           description: credential?.integrity_status === 'not_verifiable'
             ? 'This credential is authentic and currently valid. It was issued before automated content-integrity hashing, so that particular check does not apply to it.'
             : 'This credential is authentic and currently valid.',
@@ -206,20 +284,32 @@ const CredentialVerifyPage = () => {
       case 'Expired':
         return {
           icon: <AlertCircle className="w-8 h-8 text-amber-500" />,
-          text: 'Expired', bgColor: 'bg-amber-50', borderColor: 'border-amber-200', textColor: 'text-amber-800',
-          description: 'This credential was authentic but has passed its expiry date.', showActions: true,
+          text: 'Expired',
+          bgColor: 'bg-amber-50 dark:bg-amber-950/20',
+          borderColor: 'border-amber-200 dark:border-amber-800',
+          textColor: 'text-amber-800 dark:text-amber-300',
+          description: 'This credential was authentic but has passed its expiry date.',
+          showActions: true,
         };
       case 'Revoked':
         return {
           icon: <XCircle className="w-8 h-8 text-red-500" />,
-          text: 'Revoked', bgColor: 'bg-red-50', borderColor: 'border-red-200', textColor: 'text-red-800',
-          description: 'This credential has been revoked by the issuing organization and is no longer valid.', showActions: false,
+          text: 'Revoked',
+          bgColor: 'bg-red-50 dark:bg-red-950/20',
+          borderColor: 'border-red-200 dark:border-red-800',
+          textColor: 'text-red-800 dark:text-red-300',
+          description: 'This credential has been revoked by the issuing organization and is no longer valid.',
+          showActions: false,
         };
       default:
         return {
           icon: <AlertCircle className="w-8 h-8 text-gray-500" />,
-          text: 'Unknown', bgColor: 'bg-gray-50', borderColor: 'border-gray-200', textColor: 'text-gray-800',
-          description: 'This credential has an unrecognized status.', showActions: false,
+          text: 'Unknown',
+          bgColor: 'bg-gray-50 dark:bg-muted',
+          borderColor: 'border-gray-200 dark:border-border',
+          textColor: 'text-gray-800 dark:text-foreground',
+          description: 'This credential has an unrecognized status.',
+          showActions: false,
         };
     }
   };
@@ -292,6 +382,15 @@ const CredentialVerifyPage = () => {
         {shareSuccess && (
           <div className="mb-6 p-4 bg-green-500/10 border border-green-500/20 rounded-lg text-green-600 dark:text-green-400 text-center">
             {shareSuccess}
+          </div>
+        )}
+
+        {credentialData?._isPreview && (
+          <div className="mb-6 p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl text-blue-700 dark:text-blue-300 text-center space-y-1">
+            <p className="font-semibold text-sm">Template Verification Preview</p>
+            <p className="text-xs text-muted-foreground">
+              You scanned a preview QR code from the credential design editor. When official credentials are issued to recipients, their unique QR codes will link directly to their authentic verification records.
+            </p>
           </div>
         )}
 

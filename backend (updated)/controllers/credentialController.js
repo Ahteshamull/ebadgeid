@@ -28,9 +28,19 @@ const isAllowedCredentialImage = value => {
       .split(',')
       .map(origin => origin.trim())
       .filter(Boolean);
-    if (process.env.PUBLIC_STORAGE_BASE_URL) {
-      configured.push(new URL(process.env.PUBLIC_STORAGE_BASE_URL).origin);
-    }
+    const add = val => {
+      if (!val || typeof val !== 'string') return;
+      try { configured.push(new URL(val.trim()).origin); } catch {}
+    };
+    add(process.env.PUBLIC_STORAGE_BASE_URL);
+    add(process.env.STORAGE_INTERNAL_BASE_URL);
+    add(process.env.PUBLIC_API_BASE_URL);
+    (process.env.ALLOWED_ORIGINS || '').split(',').forEach(add);
+    configured.push('https://ebadgeid.onrender.com');
+    configured.push('https://api.ebadgeid.com');
+    configured.push('https://app.ebadgeid.com');
+    configured.push('http://localhost:5000');
+    configured.push('http://localhost:9000');
     return (parsed.protocol === 'https:' || parsed.protocol === 'http:')
       && configured.includes(parsed.origin) && isManagedStorageUrl(value);
   } catch {
@@ -366,7 +376,7 @@ exports.createCredential = async (req, res) => {
     let emailSent = false;
     try {
       const encodedCredentialCode = encodeURIComponent(credential_code);
-      const publicBaseUrl = (process.env.PUBLIC_APP_URL || '').replace(/\/$/, '') || 'https://ebadgeid.com';
+      const publicBaseUrl = (process.env.PUBLIC_APP_URL || '').replace(/\/$/, '') || 'https://app.ebadgeid.com';
       const verifyUrl = `${publicBaseUrl}/verifications/credentials/${encodedCredentialCode}`;
 
       let qrCodeDataUrl = '';
@@ -735,7 +745,7 @@ exports.getCredentialAsOpenBadge = async (req, res) => {
       return res.status(404).json({ message: 'Credential not found' });
     }
 
-    const appBaseUrl = (process.env.PUBLIC_APP_URL || '').replace(/\/$/, '');
+    const appBaseUrl = (process.env.PUBLIC_APP_URL || '').replace(/\/$/, '') || 'https://app.ebadgeid.com';
     const verificationUrl = `${appBaseUrl}/verifications/credentials/${encodeURIComponent(credential.credential_code)}`;
     const achieverName = [credential.achiever_details?.first_name, credential.achiever_details?.last_name]
       .filter(Boolean)

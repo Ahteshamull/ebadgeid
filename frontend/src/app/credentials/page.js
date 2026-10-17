@@ -76,6 +76,7 @@ export default function CredentialManagementPage() {
   const [search, setSearch] = useState('');
   const [credentials, setCredentials] = useState([]);
   const [designs, setDesigns] = useState([]);
+  const [designsLoading, setDesignsLoading] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [showBulkModal, setShowBulkModal] = useState(false);
   // The chosen CSV, parsed as soon as it is picked rather than at submit
@@ -247,13 +248,13 @@ export default function CredentialManagementPage() {
     return () => clearTimeout(timer);
   }, [search]);
 
-  // Fetch employees and designs when single-issue modal opens
+  // Fetch employees and designs when single-issue or bulk modal opens
   useEffect(() => {
-    if (showInviteModal) {
-      fetchEmployees();
+    if ((showInviteModal || showBulkModal) && organizationCode) {
+      if (showInviteModal) fetchEmployees();
       fetchDesigns();
     }
-  }, [showInviteModal, organizationCode]);
+  }, [showInviteModal, showBulkModal, organizationCode]);
 
   // Guards the bulk-issuance status poll below from setting state after
   // this page has been navigated away from.
@@ -263,16 +264,21 @@ export default function CredentialManagementPage() {
   }, []);
 
   const fetchDesigns = async () => {
-    if (!organizationCode) return; // see fetchCredentials() above — same race
+    if (!organizationCode) return;
     try {
+      setDesignsLoading(true);
       const response = await apiFetch(`/designs/organization/${organizationCode}`);
       const result = await response.json();
-      if (result.success) {
+      if (result.success && Array.isArray(result.data)) {
         setDesigns(result.data);
+      } else {
+        setDesigns([]);
       }
     } catch (err) {
       console.error('Error fetching designs:', err);
       setError('Failed to fetch certificate designs');
+    } finally {
+      setDesignsLoading(false);
     }
   };
 
@@ -865,13 +871,9 @@ export default function CredentialManagementPage() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button onClick={() => { setIssueKind('certificate'); setShowInviteModal(true); }} className="gap-2 bg-blue-600 hover:bg-blue-700 text-white shadow-xs">
-              <FileCheck className="h-4 w-4" />
-              Issue Certificate
-            </Button>
-            <Button onClick={() => { setIssueKind('badge'); setShowInviteModal(true); }} className="gap-2 bg-purple-600 hover:bg-purple-700 text-white shadow-xs">
-              <Award className="h-4 w-4" />
-              Issue Badge
+            <Button onClick={() => setShowInviteModal(true)} className="gap-2 bg-blue-600 hover:bg-blue-700 text-white shadow-xs">
+              <Plus className="h-4 w-4" />
+              Issue Credentials
             </Button>
             <Button onClick={() => setShowBulkModal(true)} variant="outline" className="gap-2 border-border text-foreground hover:bg-muted">
               <Upload className="h-4 w-4" />
@@ -1107,7 +1109,7 @@ export default function CredentialManagementPage() {
                 </p>
                 <Button onClick={() => setShowInviteModal(true)} className="gap-2 bg-blue-600 hover:bg-blue-700 text-white">
                   <Plus className="mr-2 h-4 w-4" />
-                  Issue Credential
+                  Issue Credentials
                 </Button>
               </div>
             )}
@@ -1280,25 +1282,98 @@ export default function CredentialManagementPage() {
           <div className="space-y-4">
             {!certificatePreview && (
             <>
-            <div className="flex items-center justify-between rounded-md border border-border p-2.5 bg-muted/40">
-              <div>
-                <p className="text-sm font-medium text-foreground">Recipient has no account here</p>
-                <p className="text-xs text-muted-foreground">Issue directly to a name and email — no entry in Manage Users required.</p>
+            {/* Credential Type Selector: Certificate vs Digital Badge */}
+            <div className="flex p-1 bg-muted rounded-lg border border-border">
+              <button
+                type="button"
+                onClick={() => {
+                  if (issueKind !== 'certificate') {
+                    setIssueKind('certificate');
+                    setSingleForm((prev) => ({ ...prev, selected_design: null }));
+                    setCertificatePreview(null);
+                  }
+                }}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 text-sm font-medium rounded-md transition-all ${
+                  issueKind === 'certificate'
+                    ? 'bg-background text-foreground shadow-xs font-semibold'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <FileCheck className="h-4 w-4 text-blue-600" />
+                Certificate
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (issueKind !== 'badge') {
+                    setIssueKind('badge');
+                    setSingleForm((prev) => ({ ...prev, selected_design: null }));
+                    setCertificatePreview(null);
+                  }
+                }}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 text-sm font-medium rounded-md transition-all ${
+                  issueKind === 'badge'
+                    ? 'bg-background text-foreground shadow-xs font-semibold'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Award className="h-4 w-4 text-purple-600" />
+                Digital Badge
+              </button>
+            </div>
+            <div 
+              onClick={() => {
+                setIsGuestRecipient(v => !v);
+                setSingleForm(prev => ({ ...prev, achiever_username: '' }));
+                setSelectedEmployee(null);
+                setCertificatePreview(null);
+              }}
+              className={`flex items-center justify-between rounded-lg border-2 p-3 transition-all cursor-pointer ${
+                isGuestRecipient 
+                  ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-950/20 shadow-sm' 
+                  : 'border-border bg-card hover:bg-muted/50 hover:border-slate-400 dark:hover:border-slate-600'
+              }`}
+            >
+              <div className="space-y-0.5 pr-4 select-none">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-semibold text-foreground">
+                    Recipient has no account here
+                  </p>
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${
+                    isGuestRecipient
+                      ? 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900/50 dark:text-blue-300 dark:border-blue-800'
+                      : 'bg-muted text-muted-foreground border-border'
+                  }`}>
+                    {isGuestRecipient ? 'Guest Active' : 'Off'}
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Issue directly to a name and email — no entry in Manage Users required.
+                </p>
               </div>
               <button
                 type="button"
                 role="switch"
                 aria-checked={isGuestRecipient}
                 aria-label="Recipient has no account here"
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation();
                   setIsGuestRecipient(v => !v);
-                  setSingleForm({ ...singleForm, achiever_username: '' });
+                  setSingleForm(prev => ({ ...prev, achiever_username: '' }));
                   setSelectedEmployee(null);
                   setCertificatePreview(null);
                 }}
-                className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${isGuestRecipient ? 'bg-primary' : 'bg-muted'}`}
+                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 transition-colors duration-200 ease-in-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
+                  isGuestRecipient 
+                    ? 'bg-blue-600 border-blue-700 shadow-sm' 
+                    : 'bg-slate-300 dark:bg-slate-700 border-slate-400 dark:border-slate-600'
+                }`}
               >
-                <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-background transition-transform ${isGuestRecipient ? 'translate-x-[18px]' : 'translate-x-1'}`} />
+                <span
+                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+                    isGuestRecipient ? 'translate-x-5' : 'translate-x-0.5'
+                  }`}
+                />
               </button>
             </div>
 
@@ -1450,77 +1525,24 @@ export default function CredentialManagementPage() {
 
             {!certificatePreview && (
               <div className="space-y-2">
-                {/* A badge is issued from a badge design. Without this the
-                    single-issue flow could only ever produce certificates. */}
-                <div className="flex gap-1 border-b border-border mb-2">
-                  {['certificate', 'badge'].map((kind) => (
-                    <button
-                      key={kind}
-                      type="button"
-                      onClick={() => {
-                        setIssueKind(kind);
-                        setSingleForm((prev) => ({ ...prev, selected_design: null }));
-                        setCertificatePreview(null);
-                      }}
-                      className={`px-3 py-1.5 text-sm font-medium border-b-2 -mb-px transition ${
-                        issueKind === kind ? 'border-primary text-primary font-semibold' : 'border-transparent text-muted-foreground hover:text-foreground'
-                      }`}
-                    >
-                      {kind === 'badge' ? 'Badge' : 'Certificate'}
-                    </button>
-                  ))}
-                </div>
                 <label className="text-sm font-medium text-foreground">
                   Select {issueKind === 'badge' ? 'Badge' : 'Certificate'} Design
                 </label>
-                <Select
-                  value={singleForm.selected_design?.design_code || ''}
-                  onValueChange={(value) => {
-                    const design = designs.find(d => d.design_code === value);
-                    setSingleForm({...singleForm, selected_design: design});
+                <DesignPicker
+                  designs={designs}
+                  loading={designsLoading}
+                  kind={issueKind}
+                  selectedCode={singleForm.selected_design?.design_code || ''}
+                  onSelectDesign={(design) => {
+                    setSingleForm(prev => ({ ...prev, selected_design: design }));
                     setSingleFormCustomFields({});
                     setCertificatePreview(null);
                   }}
-                >
-                  <SelectTrigger className="bg-background border-border text-foreground">
-                    <SelectValue placeholder="Choose a design" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-card border-border text-foreground">
-                    {designs.filter((d) => (d.design_kind || 'certificate') === issueKind).length === 0 ? (
-                      <div className="p-3 text-xs text-muted-foreground text-center">
-                        No {issueKind} designs found.
-                      </div>
-                    ) : (
-                      designs.filter((d) => (d.design_kind || 'certificate') === issueKind).map((design) => {
-                        const isValidUrl = design.main_template_url && /^(https?:\/\/|data:|\/)/i.test(design.main_template_url.trim());
-                        return (
-                          <SelectItem key={design.design_code} value={design.design_code}>
-                            <div className="flex items-center gap-2">
-                              {isValidUrl ? (
-                                <img
-                                  src={design.main_template_url}
-                                  alt={design.design_code}
-                                  className="w-8 h-6 rounded object-cover border border-border"
-                                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                                />
-                              ) : (
-                                <div className="w-8 h-6 rounded bg-muted flex items-center justify-center border border-border">
-                                  <Award className="h-3.5 w-3.5 text-primary" />
-                                </div>
-                              )}
-                              <div className="flex flex-col text-left">
-                                <span className="font-medium text-xs text-foreground">{design.design_name || design.design_code}</span>
-                                {design.design_name && (
-                                  <span className="text-[10px] text-muted-foreground">{design.design_code}</span>
-                                )}
-                              </div>
-                            </div>
-                          </SelectItem>
-                        );
-                      })
-                    )}
-                  </SelectContent>
-                </Select>
+                  onOpenEditor={() => {
+                    setShowInviteModal(false);
+                    window.location.href = issueKind === 'badge' ? '/credentials/design-editor?kind=badge' : '/credentials/design-editor?kind=certificate';
+                  }}
+                />
               </div>
             )}
 
@@ -1671,33 +1693,19 @@ export default function CredentialManagementPage() {
             <TabsContent value="emails" className="space-y-4">
               <div className="space-y-2">
                 <label className="text-sm font-medium text-foreground">Select Certificate Design</label>
-                <Select
-                  value={bulkForm.selected_design?.design_code || ''}
-                  onValueChange={(value) => {
-                    const design = designs.find(d => d.design_code === value);
-                    setBulkForm({...bulkForm, selected_design: design});
+                <DesignPicker
+                  designs={designs}
+                  loading={designsLoading}
+                  kind="certificate"
+                  selectedCode={bulkForm.selected_design?.design_code || ''}
+                  onSelectDesign={(design) => {
+                    setBulkForm(prev => ({ ...prev, selected_design: design }));
                   }}
-                >
-                  <SelectTrigger className="bg-background border-border text-foreground">
-                    <SelectValue placeholder="Choose a design" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-card border-border text-foreground">
-                    {designs.filter((d) => (d.design_kind || 'certificate') === bulkKind).map((design) => (
-                      <SelectItem key={design.design_code} value={design.design_code}>
-                        <div className="flex items-center gap-2">
-                          <Image
-                            src={design.main_template_url}
-                            alt={design.design_code}
-                            width={40}
-                            height={30}
-                            className="rounded object-cover border border-border"
-                          />
-                          <span className="font-medium">{design.design_code}</span>
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  onOpenEditor={() => {
+                    setShowBulkModal(false);
+                    window.location.href = '/credentials/design-editor?kind=certificate';
+                  }}
+                />
               </div>
 
               <div className="space-y-2">
@@ -1736,33 +1744,19 @@ export default function CredentialManagementPage() {
                 <label className="text-sm font-medium text-foreground">
                   Select {bulkKind === 'badge' ? 'Badge' : 'Certificate'} Design
                 </label>
-                <Select
-                  value={bulkForm.selected_design?.design_code || ''}
-                  onValueChange={(value) => {
-                    const design = designs.find(d => d.design_code === value);
-                    setBulkForm({...bulkForm, selected_design: design});
+                <DesignPicker
+                  designs={designs}
+                  loading={designsLoading}
+                  kind={bulkKind}
+                  selectedCode={bulkForm.selected_design?.design_code || ''}
+                  onSelectDesign={(design) => {
+                    setBulkForm(prev => ({ ...prev, selected_design: design }));
                   }}
-                >
-                  <SelectTrigger className="bg-background border-border text-foreground">
-                    <SelectValue placeholder="Choose a design" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-card border-border text-foreground">
-                    {designs.filter((d) => (d.design_kind || 'certificate') === bulkKind).map((design) => (
-                      <SelectItem key={design.design_code} value={design.design_code}>
-                        <div className="flex items-center gap-2">
-                          <Image
-                            src={design.main_template_url}
-                            alt={design.design_code}
-                            width={40}
-                            height={30}
-                            className="rounded object-cover border border-border"
-                          />
-                          <span className="font-medium">{design.design_code}</span>
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  onOpenEditor={() => {
+                    setShowBulkModal(false);
+                    window.location.href = bulkKind === 'badge' ? '/credentials/design-editor?kind=badge' : '/credentials/design-editor?kind=certificate';
+                  }}
+                />
               </div>
               
               <div className="space-y-3">
@@ -1965,5 +1959,114 @@ export default function CredentialManagementPage() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+function DesignPicker({
+  designs = [],
+  loading = false,
+  kind = 'certificate',
+  selectedCode = '',
+  onSelectDesign,
+  onOpenEditor
+}) {
+  const publishedDesigns = designs.filter(
+    (d) => (d.design_kind || 'certificate') === kind && (!d.status || d.status === 'published')
+  );
+  const draftDesigns = designs.filter(
+    (d) => (d.design_kind || 'certificate') === kind && d.status && d.status !== 'published'
+  );
+
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2.5 p-3 rounded-lg border border-border bg-muted/30 text-xs text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />
+        <span>Loading available {kind} templates...</span>
+      </div>
+    );
+  }
+
+  if (publishedDesigns.length === 0) {
+    return (
+      <div className="rounded-lg border-2 border-dashed border-border bg-muted/20 p-4 space-y-3">
+        <div className="flex items-start gap-3">
+          <div className="p-2 rounded-lg bg-primary/10 text-primary shrink-0 mt-0.5">
+            {kind === 'badge' ? <Award className="h-5 w-5" /> : <FileCheck className="h-5 w-5" />}
+          </div>
+          <div className="space-y-1">
+            <p className="text-sm font-semibold text-foreground">
+              {draftDesigns.length > 0 
+                ? `No Published ${kind === 'badge' ? 'Badge' : 'Certificate'} Designs`
+                : `No ${kind === 'badge' ? 'Badge' : 'Certificate'} Designs Found`
+              }
+            </p>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              {draftDesigns.length > 0
+                ? `You have ${draftDesigns.length} template(s) saved in draft. Templates must be published before credentials can be issued.`
+                : `Your organization does not have any active ${kind} designs yet. Create and publish a design to start issuing credentials.`
+              }
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <Button
+            type="button"
+            size="sm"
+            onClick={onOpenEditor}
+            className="text-xs gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            {draftDesigns.length > 0
+              ? `Open Editor & Publish Design`
+              : `Create ${kind === 'badge' ? 'Badge' : 'Certificate'} Design`
+            }
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <Select
+      value={selectedCode}
+      onValueChange={(val) => {
+        const found = designs.find(d => d.design_code === val);
+        onSelectDesign(found || null);
+      }}
+    >
+      <SelectTrigger className="bg-background border-border text-foreground">
+        <SelectValue placeholder={`Choose a published ${kind} design`} />
+      </SelectTrigger>
+      <SelectContent className="bg-card border-border text-foreground max-h-60 overflow-y-auto">
+        {publishedDesigns.map((design) => {
+          const isValidUrl = design.main_template_url && /^(https?:\/\/|data:|\/)/i.test(design.main_template_url.trim());
+          const title = design.credential_title || design.design_name || design.design_code;
+          return (
+            <SelectItem key={design.design_code} value={design.design_code}>
+              <div className="flex items-center gap-2.5">
+                {isValidUrl ? (
+                  <img
+                    src={design.main_template_url}
+                    alt={design.design_code}
+                    className="w-8 h-6 rounded object-cover border border-border shrink-0"
+                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                  />
+                ) : (
+                  <div className="w-8 h-6 rounded bg-muted flex items-center justify-center border border-border shrink-0">
+                    <Award className="h-3.5 w-3.5 text-primary" />
+                  </div>
+                )}
+                <div className="flex flex-col text-left min-w-0">
+                  <span className="font-medium text-xs text-foreground truncate">{title}</span>
+                  <span className="text-[10px] text-muted-foreground truncate">
+                    {design.design_code} • Published
+                  </span>
+                </div>
+              </div>
+            </SelectItem>
+          );
+        })}
+      </SelectContent>
+    </Select>
   );
 }

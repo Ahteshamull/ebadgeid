@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { apiFetch, UPLOAD_BASE_URL, getAuthHeaders } from '@/lib/api';
+import { apiFetch, uploadFile } from '@/lib/api';
+import { validateProfileImageFile, validateCompanyLogoFile, validateSignatureFile } from '@/lib/profile-upload-utils.mjs';
 import { useSession } from '@/hooks/use-session';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -197,31 +198,35 @@ export default function SettingsPage() {
     }));
   };
 
-  const uploadFile = async (file) => {
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('visibility', 'private');
-    
-    const response = await fetch(`${UPLOAD_BASE_URL}/api/uploads`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: getAuthHeaders({}, true),
-      body: formData,
-    });
-    
-    if (!response.ok) {
-      throw new Error('Failed to upload file');
-    }
-    
-    const result = await response.json();
-    return result.url;
-  };
-
   const handleFileUpload = async (e, type) => {
-    const file = e.target.files[0];
+    const file = e.target.files?.[0];
     if (!file) return;
 
+    if (type === 'profile') {
+      const validation = validateProfileImageFile(file);
+      if (!validation.valid) {
+        setError(validation.error);
+        if (e.target) e.target.value = '';
+        return;
+      }
+    } else if (type === 'logo') {
+      const validation = validateCompanyLogoFile(file);
+      if (!validation.valid) {
+        setError(validation.error);
+        if (e.target) e.target.value = '';
+        return;
+      }
+    } else if (type === 'signature') {
+      const validation = validateSignatureFile(file);
+      if (!validation.valid) {
+        setError(validation.error);
+        if (e.target) e.target.value = '';
+        return;
+      }
+    }
+
     setUploading(prev => ({ ...prev, [type]: true }));
+    setError(null);
     
     try {
       const uploadedUrl = await uploadFile(file);
@@ -246,6 +251,7 @@ export default function SettingsPage() {
       setError(`Failed to upload ${type}: ${err.message}`);
     } finally {
       setUploading(prev => ({ ...prev, [type]: false }));
+      if (e.target) e.target.value = '';
     }
   };
 
@@ -312,9 +318,15 @@ export default function SettingsPage() {
         };
 
         await updateOrganization(orgUpdateData);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('organization-updated', { detail: orgUpdateData }));
+        }
       }
 
       setSuccess(true);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('user-profile-updated', { detail: userUpdateData }));
+      }
       setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
       setError(err.message);
@@ -374,7 +386,15 @@ export default function SettingsPage() {
         )}
 
         {/* Tabs Navigation */}
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+        <Tabs 
+          value={activeTab} 
+          onValueChange={(tab) => {
+            setError(null);
+            setSuccess(false);
+            setActiveTab(tab);
+          }} 
+          className="space-y-6"
+        >
           <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 h-auto p-1.5 gap-1.5 bg-muted/80 border border-border rounded-xl">
             <TabsTrigger value="profile" className="flex items-center justify-center gap-2 py-2.5 data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-xs rounded-lg text-xs font-semibold text-muted-foreground hover:text-foreground transition-all">
               <User className="h-4 w-4" />
@@ -435,6 +455,9 @@ export default function SettingsPage() {
                 organizationData={organizationData}
                 uploading={uploading}
                 handleFileUpload={handleFileUpload}
+                onRemoveSignature={() => setOrganizationData(prev => ({ ...prev, signature: '' }))}
+                onSave={handleSubmit}
+                saving={saving}
               />
             </TabsContent>
           )}
@@ -520,7 +543,7 @@ const ProfileSettings = ({ userData, uploading, handleUserChange, handleFileUplo
             <Input
               id="profile-image"
               type="file"
-              accept="image/*"
+              accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp"
               className="hidden"
               disabled={uploading.profile}
               onChange={(e) => handleFileUpload(e, 'profile')}
@@ -536,7 +559,7 @@ const ProfileSettings = ({ userData, uploading, handleUserChange, handleFileUplo
               {uploading.profile ? 'Uploading...' : 'Choose Image'}
             </Button>
             <p className="text-xs text-muted-foreground text-center max-w-[200px]">
-              JPG, PNG or GIF. Max size 5MB.
+              PNG, JPEG or WEBP. Max size 5 MB.
             </p>
           </div>
         </div>
@@ -676,7 +699,7 @@ const ProfileSettings = ({ userData, uploading, handleUserChange, handleFileUplo
 );
 
 // Component for Signature Settings
-const SignatureSettings = ({ organizationData, uploading, handleFileUpload }) => (
+const SignatureSettings = ({ organizationData, uploading, handleFileUpload, onRemoveSignature, onSave, saving }) => (
   <Card className="bg-card border-border shadow-sm">
     <CardHeader>
       <CardTitle className="flex items-center gap-2 text-foreground">
@@ -694,7 +717,7 @@ const SignatureSettings = ({ organizationData, uploading, handleFileUpload }) =>
           <Label className="text-sm font-medium text-foreground mb-3 block">
             Signature Preview
           </Label>
-          <div className="w-full h-32 bg-muted/40 border-2 border-dashed border-border rounded-lg flex items-center justify-center p-4">
+          <div className="w-full h-36 bg-muted/40 border-2 border-dashed border-border rounded-lg flex items-center justify-center p-4 relative">
             {organizationData.signature ? (
               <img 
                 src={organizationData.signature} 
@@ -710,35 +733,58 @@ const SignatureSettings = ({ organizationData, uploading, handleFileUpload }) =>
           </div>
         </div>
 
-        {/* Upload Section */}
+        {/* Upload & Actions Section */}
         <div className="flex flex-col items-center gap-4 w-full max-w-md">
           <Input
             id="signature"
             type="file"
-            accept="image/*"
+            accept="image/png,image/jpeg,image/webp,image/svg+xml,.png,.jpg,.jpeg,.webp,.svg"
             className="hidden"
             disabled={uploading.signature}
             onChange={(e) => handleFileUpload(e, 'signature')}
           />
-          <Button
-            onClick={() => document.getElementById('signature').click()}
-            disabled={uploading.signature}
-            className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90 w-full font-semibold shadow-sm"
-          >
-            {uploading.signature ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Upload className="h-4 w-4" />
+          <div className="flex items-center gap-3 w-full">
+            <Button
+              onClick={() => document.getElementById('signature').click()}
+              disabled={uploading.signature}
+              className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90 flex-1 font-semibold shadow-sm"
+            >
+              {uploading.signature ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Upload className="h-4 w-4" />
+              )}
+              {uploading.signature ? 'Uploading Signature...' : 'Upload Signature'}
+            </Button>
+            {organizationData.signature && (
+              <Button
+                variant="outline"
+                onClick={onRemoveSignature}
+                disabled={uploading.signature || saving}
+                className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+              >
+                Remove
+              </Button>
             )}
-            {uploading.signature ? 'Uploading Signature...' : 'Upload Signature'}
-          </Button>
+          </div>
           <div className="text-center space-y-1">
             <p className="text-sm text-foreground">
               Recommended: Transparent PNG with clear signature
             </p>
             <p className="text-xs text-muted-foreground">
-              Max file size: 5MB • Optimal dimensions: 400x150px
+              PNG, JPG, WEBP or SVG • Max size: 5MB • Optimal dimensions: 400x150px
             </p>
+          </div>
+
+          <div className="w-full pt-4 border-t border-border flex justify-end">
+            <Button
+              onClick={onSave}
+              disabled={saving || uploading.signature}
+              className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90 w-full sm:w-auto font-semibold shadow-sm"
+            >
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              {saving ? 'Saving Signature...' : 'Save Signature'}
+            </Button>
           </div>
         </div>
       </div>
@@ -791,23 +837,36 @@ const OrganizationSettings = ({ organizationData, uploading, handleOrganizationC
             <Input
               id="organization-logo"
               type="file"
-              accept="image/*"
+              accept="image/png,image/jpeg,image/webp,image/svg+xml,.png,.jpg,.jpeg,.webp,.svg"
               className="hidden"
               disabled={uploading.logo}
               onChange={(e) => handleFileUpload(e, 'logo')}
             />
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => document.getElementById('organization-logo').click()}
-              disabled={uploading.logo}
-              className="gap-2 border-border text-foreground hover:bg-muted"
-            >
-              <Upload className="h-4 w-4" />
-              {uploading.logo ? 'Uploading...' : 'Upload Logo'}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => document.getElementById('organization-logo').click()}
+                disabled={uploading.logo}
+                className="gap-2 border-border text-foreground hover:bg-muted"
+              >
+                <Upload className="h-4 w-4" />
+                {uploading.logo ? 'Uploading...' : 'Upload Logo'}
+              </Button>
+              {organizationData.logo && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleOrganizationChange({ target: { name: 'logo', value: '' } })}
+                  disabled={uploading.logo}
+                  className="text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
+                >
+                  Remove
+                </Button>
+              )}
+            </div>
             <p className="text-xs text-muted-foreground text-center max-w-[200px]">
-              JPG, PNG or SVG. Max size 5MB.
+              PNG, JPEG, WEBP or SVG. Max size 5 MB.
             </p>
           </div>
 
@@ -965,27 +1024,26 @@ const BrandKitSettings = () => {
   }, []);
 
   const handleLogoUpload = async (e) => {
-    const file = e.target.files[0];
+    const file = e.target.files?.[0];
     if (!file) return;
+
+    const validation = validateCompanyLogoFile(file);
+    if (!validation.valid) {
+      setError(validation.error);
+      if (e.target) e.target.value = '';
+      return;
+    }
+
     setUploadingLogo(true);
     setError(null);
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('visibility', 'private');
-      const response = await fetch(`${UPLOAD_BASE_URL}/api/uploads`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: getAuthHeaders({}, true),
-        body: formData,
-      });
-      if (!response.ok) throw new Error('Failed to upload logo');
-      const result = await response.json();
-      setBrandKit((prev) => ({ ...prev, logo_url: result.url }));
+      const uploadedUrl = await uploadFile(file);
+      setBrandKit((prev) => ({ ...prev, logo_url: uploadedUrl }));
     } catch (err) {
-      setError(err.message);
+      setError(`Failed to upload logo: ${err.message}`);
     } finally {
       setUploadingLogo(false);
+      if (e.target) e.target.value = '';
     }
   };
 
@@ -1007,6 +1065,9 @@ const BrandKitSettings = () => {
       if (!res.ok || json.success === false) throw new Error(json.message || 'Failed to save brand kit');
       setBrandKit(json.data);
       setSuccess(true);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('brandkit-updated', { detail: json.data }));
+      }
       setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
       setError(err.message);
@@ -1090,19 +1151,47 @@ const BrandKitSettings = () => {
         <div className="space-y-2">
           <Label className="text-foreground">Logo</Label>
           <div className="flex items-center gap-4">
-            <div className="w-20 h-20 rounded-lg border-2 border-dashed border-border bg-muted/40 flex items-center justify-center">
+            <div className="w-20 h-20 rounded-lg border-2 border-dashed border-border bg-muted/40 flex items-center justify-center overflow-hidden">
               {brandKit.logo_url ? (
                 <img src={brandKit.logo_url} alt="Brand logo" className="max-w-full max-h-full object-contain p-1" />
               ) : (
                 <ImagePlaceholderIcon aria-hidden="true" className="h-6 w-6 text-muted-foreground opacity-50" />
               )}
             </div>
-            <div>
-              <Input id="brand-logo" type="file" accept="image/*" className="hidden" disabled={uploadingLogo} onChange={handleLogoUpload} />
-              <Button variant="outline" size="sm" onClick={() => document.getElementById('brand-logo').click()} disabled={uploadingLogo} className="gap-2 border-border text-foreground hover:bg-muted">
-                <Upload className="h-4 w-4" />
-                {uploadingLogo ? 'Uploading...' : 'Upload logo'}
-              </Button>
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <Input 
+                  id="brand-logo" 
+                  type="file" 
+                  accept="image/png,image/jpeg,image/webp,image/svg+xml,.png,.jpg,.jpeg,.webp,.svg" 
+                  className="hidden" 
+                  disabled={uploadingLogo} 
+                  onChange={handleLogoUpload} 
+                />
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => document.getElementById('brand-logo').click()} 
+                  disabled={uploadingLogo} 
+                  className="gap-2 border-border text-foreground hover:bg-muted"
+                >
+                  {uploadingLogo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                  {uploadingLogo ? 'Uploading...' : 'Upload logo'}
+                </Button>
+                {brandKit.logo_url && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setBrandKit(prev => ({ ...prev, logo_url: '' }))}
+                    className="text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
+                  >
+                    Remove
+                  </Button>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                PNG, JPG, WEBP or SVG. Max size: 5MB.
+              </p>
             </div>
           </div>
         </div>

@@ -10,7 +10,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import Image from 'next/image';
 import NextImage from 'next/image';
-import { Download, Plus, Loader2, Ban, AlertTriangle, Search, Award, FileCheck, FileX, Upload, FileText, Move, ZoomIn, ZoomOut, Type, Bold, Italic, Underline, Trash2, AlignLeft, ChevronLeft, ChevronRight, Circle, Square, Minus, Star, RotateCcw } from 'lucide-react';
+import { Download, Plus, Loader2, Ban, AlertTriangle, Search, Award, FileCheck, FileX, Upload, FileText, Move, ZoomIn, ZoomOut, Type, Bold, Italic, Underline, Trash2, AlignLeft, ChevronLeft, ChevronRight, Circle, Square, Minus, Star, RotateCcw, X } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
@@ -2169,6 +2169,7 @@ export default function CredentialManagementPage() {
   const [hasSavedDesign, setHasSavedDesign] = useState(false);
   const [showDraftsDialog, setShowDraftsDialog] = useState(false);
   const [savedDrafts, setSavedDrafts] = useState([]);
+  const [confirmingDraftDeleteId, setConfirmingDraftDeleteId] = useState(null);
 
   // Bulk issuance state
   const [issuanceMode, setIssuanceMode] = useState('single'); // 'single' or 'bulk'
@@ -3550,19 +3551,45 @@ export default function CredentialManagementPage() {
                             >
                               {t('resume')}
                             </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (window.confirm('Are you sure you want to delete this draft?')) {
-                                  handleDeleteDraft(draft.id, e);
-                                }
-                              }}
-                              className="border-red-300 text-red-600 hover:bg-red-50"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
+                            {confirmingDraftDeleteId === draft.id ? (
+                              <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  className="h-8 px-2 text-xs bg-red-600 hover:bg-red-700 text-white"
+                                  onClick={(e) => {
+                                    setConfirmingDraftDeleteId(null);
+                                    handleDeleteDraft(draft.id, e);
+                                  }}
+                                >
+                                  Confirm
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-8 px-2 text-xs"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setConfirmingDraftDeleteId(null);
+                                  }}
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setConfirmingDraftDeleteId(draft.id);
+                                }}
+                                className="border-red-300 text-red-600 hover:bg-red-50"
+                                title="Delete draft"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            )}
                           </div>
                         </div>
                       </CardContent>

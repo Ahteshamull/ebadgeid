@@ -48,7 +48,7 @@ const updateBrandKit = async (req, res) => {
         const brandKit = await OrganizationBrandKit.findOneAndUpdate(
             { organization_code: req.user.organization_code },
             { organization_code: req.user.organization_code, ...update },
-            { upsert: true, new: true }
+            { upsert: true, returnDocument: 'after' }
         );
         res.status(200).json({ success: true, message: 'Brand kit updated', data: brandKit });
     } catch (error) {

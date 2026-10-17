@@ -290,7 +290,7 @@ exports.updateUser = async (req, res) => {
     }
 
     const updatedUser = await User.findByIdAndUpdate(req.params.id, allowedFields, {
-      new: true,
+      returnDocument: 'after',
       runValidators: true,
     });
     res.json(updatedUser);

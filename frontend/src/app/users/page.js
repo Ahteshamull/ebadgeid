@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { apiFetch } from '@/lib/api';
 import { useSession } from '@/hooks/use-session';
 import Image from "next/image";
@@ -69,8 +69,10 @@ import {
   CheckCircle2,
   XCircle,
   Upload,
-  FileText
+  FileText,
+  FileSpreadsheet
 } from "lucide-react";
+import { generateUserExcelWorkbook } from "@/lib/user-export-utils.mjs";
 
 export default function UserManagementPage() {
   const { session } = useSession();
@@ -84,6 +86,8 @@ export default function UserManagementPage() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteDesignation, setInviteDesignation] = useState("");
   const [inviteLoading, setInviteLoading] = useState(false);
+  const isSubmittingInviteRef = useRef(false);
+  const [isExportingExcel, setIsExportingExcel] = useState(false);
   const [feedbackDialog, setFeedbackDialog] = useState({ open: false, message: "", success: true });
   
   // Bulk invite states
@@ -153,12 +157,30 @@ export default function UserManagementPage() {
   };
 
   const handleInviteUser = async () => {
-    if (!inviteEmail || !inviteDesignation) {
-      setFeedbackDialog({ open: true, success: false, message: "Please fill all fields." });
+    // 1. Prevent duplicate submission via synchronous ref guard
+    if (isSubmittingInviteRef.current || inviteLoading) {
       return;
     }
 
+    const trimmedEmail = String(inviteEmail || '').trim().toLowerCase();
+    const trimmedDesignation = String(inviteDesignation || '').trim();
+
+    if (!trimmedEmail || !trimmedDesignation) {
+      setFeedbackDialog({ open: true, success: false, message: "Please fill in both email and designation." });
+      return;
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(trimmedEmail)) {
+      setFeedbackDialog({ open: true, success: false, message: "Please enter a valid email address." });
+      return;
+    }
+
+    isSubmittingInviteRef.current = true;
     setInviteLoading(true);
+
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => abortController.abort(), 12000);
 
     try {
       const response = await apiFetch("/invitation/generate", {
@@ -166,44 +188,49 @@ export default function UserManagementPage() {
         headers: {
           "Content-Type": "application/json",
         },
+        signal: abortController.signal,
         body: JSON.stringify({
-          email: inviteEmail,
-          designation: inviteDesignation,
+          email: trimmedEmail,
+          designation: trimmedDesignation,
         }),
       });
 
-      const data = await response.json();
+      clearTimeout(timeoutId);
+      const data = await response.json().catch(() => ({}));
 
-      if (data.success) {
+      if (response.ok && data.success) {
         setFeedbackDialog({
           open: true,
           success: true,
-          message: "Invitation sent successfully.",
+          message: data.message || `Invitation sent successfully to ${trimmedEmail}.`,
         });
         setShowInviteUserModal(false);
         setInviteEmail("");
         setInviteDesignation("");
-      } else if (data.message.includes("already invited")) {
-        setFeedbackDialog({
-          open: true,
-          success: false,
-          message: "Employee already invited. Wait until he/she accepts or declines invitation.",
-        });
       } else {
+        const errorMsg = data.message || (response.status === 409
+          ? `An invitation or user already exists for ${trimmedEmail}.`
+          : "Failed to send invitation. Please try again.");
         setFeedbackDialog({
           open: true,
           success: false,
-          message: data.message || "Failed to send invitation.",
+          message: errorMsg,
         });
       }
     } catch (error) {
+      clearTimeout(timeoutId);
       console.error("Invite error:", error);
+      const isTimeout = error.name === "AbortError";
       setFeedbackDialog({
         open: true,
         success: false,
-        message: "Something went wrong. Please try again.",
+        message: isTimeout
+          ? "Request timed out while contacting server. Please check your network connection."
+          : (error.message || "Something went wrong while sending the invitation. Please try again."),
       });
     } finally {
+      clearTimeout(timeoutId);
+      isSubmittingInviteRef.current = false;
       setInviteLoading(false);
     }
   };
@@ -391,6 +418,30 @@ export default function UserManagementPage() {
     doc.save("user_list.pdf");
   };
 
+  const exportToExcel = async () => {
+    try {
+      setIsExportingExcel(true);
+      const [xlsxModule, fileSaverModule] = await Promise.all([
+        import('xlsx'),
+        import('file-saver')
+      ]);
+
+      const XLSX = xlsxModule.default || xlsxModule;
+      const saveAs = fileSaverModule.saveAs || fileSaverModule.default;
+
+      const workbook = generateUserExcelWorkbook(XLSX, filteredUsers);
+      const excelBuffer = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
+      const blob = new Blob([excelBuffer], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      saveAs(blob, "user_list.xlsx");
+    } catch (error) {
+      console.error("Error exporting users to Excel:", error);
+    } finally {
+      setIsExportingExcel(false);
+    }
+  };
+
   const getInitials = (firstName, lastName) => {
     return `${firstName?.[0] || ''}${lastName?.[0] || ''}`.toUpperCase();
   };
@@ -405,13 +456,22 @@ export default function UserManagementPage() {
               User Management
             </h1>
             <p className="text-muted-foreground mt-2">
-              Manage your organization's users and permissions
+              Manage your organization&apos;s users and permissions
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" onClick={exportToPDF} className="gap-2 border-border text-foreground">
               <Download className="h-4 w-4" />
               Export PDF
+            </Button>
+            <Button
+              variant="outline"
+              onClick={exportToExcel}
+              disabled={isExportingExcel}
+              className="gap-2 border-border text-foreground"
+            >
+              <FileSpreadsheet className="h-4 w-4" />
+              {isExportingExcel ? "Exporting..." : "Export Excel"}
             </Button>
             <Button onClick={() => setShowInviteUserModal(true)} className="gap-2 bg-blue-600 hover:bg-blue-700 text-white">
               <Plus className="h-4 w-4" />
@@ -693,9 +753,14 @@ export default function UserManagementPage() {
               <label className="text-sm font-medium text-foreground">Email Address</label>
               <Input
                 placeholder="Enter email address"
+                type="email"
                 value={inviteEmail}
                 onChange={(e) => setInviteEmail(e.target.value)}
-                className="bg-background border-border text-foreground"
+                disabled={inviteLoading}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleInviteUser();
+                }}
+                className="bg-background border-border text-foreground disabled:opacity-50"
               />
             </div>
             <div className="space-y-2">
@@ -704,18 +769,22 @@ export default function UserManagementPage() {
                 placeholder="Enter designation"
                 value={inviteDesignation}
                 onChange={(e) => setInviteDesignation(e.target.value)}
-                className="bg-background border-border text-foreground"
+                disabled={inviteLoading}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleInviteUser();
+                }}
+                className="bg-background border-border text-foreground disabled:opacity-50"
               />
             </div>
             <Button
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white transition-all disabled:opacity-75 disabled:cursor-not-allowed"
               onClick={handleInviteUser}
               disabled={inviteLoading}
             >
               {inviteLoading ? (
                 <>
                   <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                  Sending Invite...
+                  Sending...
                 </>
               ) : (
                 <>

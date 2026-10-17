@@ -2,20 +2,32 @@ const StoredFile = require('../models/StoredFile');
 
 const STORAGE_KEY_PATTERN = /^(?:profile-|font-|ai-)?[a-z0-9-]*[a-f0-9]{32}\.(?:png|jpe?g|webp|pdf|ttf|otf|woff2?)$/i;
 
-const storageOrigin = () => {
-  if (!process.env.PUBLIC_STORAGE_BASE_URL) return null;
-  try {
-    return new URL(process.env.PUBLIC_STORAGE_BASE_URL).origin;
-  } catch {
-    return null;
-  }
+const allowedStorageOrigins = () => {
+  const origins = new Set();
+  const add = (val) => {
+    if (!val || typeof val !== 'string') return;
+    try {
+      origins.add(new URL(val.trim()).origin);
+    } catch {}
+  };
+  add(process.env.PUBLIC_STORAGE_BASE_URL);
+  add(process.env.STORAGE_INTERNAL_BASE_URL);
+  add(process.env.PUBLIC_API_BASE_URL);
+  (process.env.ALLOWED_ORIGINS || '').split(',').forEach(add);
+  (process.env.CREDENTIAL_IMAGE_ALLOWED_ORIGINS || '').split(',').forEach(add);
+  origins.add('https://ebadgeid.onrender.com');
+  origins.add('https://api.ebadgeid.com');
+  origins.add('https://app.ebadgeid.com');
+  origins.add('http://localhost:5000');
+  origins.add('http://localhost:9000');
+  return origins;
 };
 
 const managedStorageUrl = value => {
   try {
     const parsed = new URL(value);
-    const origin = storageOrigin();
-    if (!origin || parsed.origin !== origin) return { valid: false };
+    const origins = allowedStorageOrigins();
+    if (!origins.has(parsed.origin)) return { valid: false };
     if (parsed.pathname.startsWith('/uploads/')) return { valid: true, legacy: true };
     const match = parsed.pathname.match(/^\/api\/files\/([^/]+)$/);
     if (!match || !STORAGE_KEY_PATTERN.test(decodeURIComponent(match[1]))) return { valid: false };

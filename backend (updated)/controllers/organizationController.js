@@ -214,7 +214,7 @@ exports.updateOrganization = async (req, res) => {
     const updatedOrg = await Organization.findByIdAndUpdate(
       req.params.id,
       allowedFields,
-      { new: true, runValidators: true }
+      { returnDocument: 'after', runValidators: true }
     );
     res.status(200).json(updatedOrg);
   } catch (err) {

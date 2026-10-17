@@ -113,8 +113,7 @@ exports.generateCertificate = async (req, res) => {
     if (!serviceUrl || !internalKey) {
       return res.status(503).json({ message: 'Certificate generator is not configured' });
     }
-    const verificationBase = (process.env.PUBLIC_APP_URL || '').replace(/\/$/, '');
-    if (!verificationBase) return res.status(503).json({ message: 'PUBLIC_APP_URL is not configured' });
+    const verificationBase = (process.env.PUBLIC_APP_URL || 'https://app.ebadgeid.com').replace(/\/$/, '');
 
     // Same YYYY-MM-DD shape credentialController.createCredential stores as
     // credential_issue_date, so the date printed on the image and the date

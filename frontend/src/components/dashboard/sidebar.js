@@ -29,6 +29,7 @@ import {
   ExternalLink,
   Award,
   FileCheck,
+  Palette,
   X as XIcon
 } from "lucide-react"
 
@@ -106,20 +107,12 @@ const sidebarItems = [
     description: "Issue & Track Credentials"
   },
   {
-    id: "certificates",
-    href: '/credentials/certificates',
-    title: "Certificates",
-    icon: <FileCheck className="h-4 w-4" />,
+    id: "credential_designer",
+    href: '/credentials/design-editor',
+    title: "Credential Designer",
+    icon: <Palette className="h-4 w-4" />,
     roles: ["admin", "platform_admin"],
-    description: "Institutional Certificates"
-  },
-  {
-    id: "badges",
-    href: '/credentials/badges',
-    title: "Digital Badges",
-    icon: <Award className="h-4 w-4" />,
-    roles: ["admin", "platform_admin"],
-    description: "Visual Achievement Badges"
+    description: "Design Certificates & Badges"
   },
   {
     id: "manage_goals",
@@ -202,6 +195,18 @@ export function Sidebar({ open = false, onClose }) {
     };
 
     fetchUserData();
+
+    const handleProfileUpdate = (event) => {
+      if (event?.detail) {
+        setUser((prev) => ({ ...prev, ...event.detail }));
+      } else {
+        fetchUserData();
+      }
+    };
+    window.addEventListener('user-profile-updated', handleProfileUpdate);
+    return () => {
+      window.removeEventListener('user-profile-updated', handleProfileUpdate);
+    };
   }, [session, sessionLoading]);
 
   const getUserInitials = (name) => {
@@ -382,7 +387,7 @@ export function Sidebar({ open = false, onClose }) {
           
             <div className="space-y-1">
               {filteredSidebarItems.map((item) => {
-                const isActive = pathname === item.href;
+                const isActive = pathname === item.href || (item.href === '/credentials/design-editor' && (pathname?.startsWith('/credentials/design-editor') || pathname === '/credentials/certificates' || pathname === '/credentials/badges'));
                 
                 return (
                   <div key={item.id} className="group">

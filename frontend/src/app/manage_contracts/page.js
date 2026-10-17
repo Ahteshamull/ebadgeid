@@ -3,7 +3,8 @@ import React, { useState, useEffect } from 'react';
 import { Search, Plus, Send, Key, FileText, Clock, MessageSquare, AlertTriangle, XCircle, Upload, X, File, Copy } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { toast } from 'sonner';
-import { apiFetch, API_BASE_URL as ROOT_API_BASE_URL, UPLOAD_BASE_URL } from '@/lib/api';
+import { apiFetch, uploadFile, API_BASE_URL as ROOT_API_BASE_URL, UPLOAD_BASE_URL } from '@/lib/api';
+import { validateContractDocumentFile, validateAttachmentFile } from '@/lib/contract-upload-utils.mjs';
 
 const API_BASE_URL = `${ROOT_API_BASE_URL}/contracts`;
 const STORAGE_API_URL = `${UPLOAD_BASE_URL}/api/uploads`;
@@ -111,70 +112,69 @@ export default function ContractManagement() {
     }
   };
 
-  // Upload file to storage server
+  // Upload file to storage server using authenticated helper
   const uploadFileToStorage = async (file) => {
-    const formData = new FormData();
-    formData.append('file', file);
-    // Contract documents and attachments are confidential legal/business
-    // files -- they must never default to the public visibility other,
-    // less sensitive uploads (badge assets) keep for compatibility.
-    formData.append('visibility', 'private');
-
-    const response = await fetch(STORAGE_API_URL, {
-      method: 'POST',
-      credentials: 'include',
-      body: formData
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Upload failed');
-    }
-
-    const data = await response.json();
-    return data.url;
+    return await uploadFile(file, { visibility: 'private' });
   };
 
   // Handle contract file selection
   const handleContractFileChange = async (e) => {
-    const file = e.target.files[0];
+    const file = e.target.files?.[0];
     if (!file) return;
+
+    const validation = validateContractDocumentFile(file);
+    if (!validation.valid) {
+      toast.error(validation.error);
+      e.target.value = '';
+      return;
+    }
 
     try {
       setUploadingContract(true);
       const url = await uploadFileToStorage(file);
       setContractFile(file);
-      setCreateForm({ ...createForm, contract_content_url: url });
-      alert('Contract document uploaded successfully!');
+      setCreateForm(prev => ({ ...prev, contract_content_url: url }));
+      toast.success('Contract document uploaded successfully!');
     } catch (error) {
       console.error('Error uploading contract:', error);
-      alert(error.message || 'Failed to upload contract document');
+      toast.error(error.message || 'Failed to upload contract document');
     } finally {
       setUploadingContract(false);
+      e.target.value = '';
     }
   };
 
   // Handle attachment files selection
   const handleAttachmentFilesChange = async (e) => {
-    const files = Array.from(e.target.files);
+    const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
+
+    for (const file of files) {
+      const validation = validateAttachmentFile(file);
+      if (!validation.valid) {
+        toast.error(validation.error);
+        e.target.value = '';
+        return;
+      }
+    }
 
     try {
       setUploadingAttachments(true);
       const uploadPromises = files.map(file => uploadFileToStorage(file));
       const urls = await Promise.all(uploadPromises);
       
-      setAttachmentFiles([...attachmentFiles, ...files]);
-      setCreateForm({ 
-        ...createForm, 
-        contract_attachments: [...createForm.contract_attachments, ...urls] 
-      });
-      alert(`${files.length} attachment(s) uploaded successfully!`);
+      setAttachmentFiles(prev => [...prev, ...files]);
+      setCreateForm(prev => ({ 
+        ...prev, 
+        contract_attachments: [...prev.contract_attachments, ...urls] 
+      }));
+      toast.success(`${files.length} attachment(s) uploaded successfully!`);
     } catch (error) {
       console.error('Error uploading attachments:', error);
-      alert(error.message || 'Failed to upload attachments');
+      toast.error(error.message || 'Failed to upload attachments');
     } finally {
       setUploadingAttachments(false);
+      e.target.value = '';
     }
   };
 
@@ -201,7 +201,7 @@ export default function ContractManagement() {
   const handleCreateContract = async () => {
     try {
       if (!createForm.contract_content_url) {
-        alert('Please upload a contract document');
+        toast.error('Please upload a contract document');
         return;
       }
       const response = await apiFetch(`${API_BASE_URL}/create`, {
@@ -211,18 +211,18 @@ export default function ContractManagement() {
         },
         body: JSON.stringify(createForm)
       });
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
       if (response.ok) {
-        alert('Contract created successfully!');
+        toast.success('Contract created successfully!');
         setShowCreateModal(false);
         fetchContracts();
         resetCreateForm();
       } else {
-        alert(data.message || 'Failed to create contract');
+        toast.error(data.message || 'Failed to create contract');
       }
     } catch (error) {
       console.error('Error creating contract:', error);
-      alert('Error creating contract');
+      toast.error(error.message || 'Error creating contract');
     }
   };
 
@@ -236,18 +236,18 @@ export default function ContractManagement() {
         },
         body: JSON.stringify(inviteForm)
       });
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
       if (response.ok) {
-        alert('Party invited successfully!');
+        toast.success('Party invited successfully!');
         setShowInviteModal(false);
         fetchContracts();
         resetInviteForm();
       } else {
-        alert(data.message || 'Failed to invite party');
+        toast.error(data.message || 'Failed to invite party');
       }
     } catch (error) {
       console.error('Error inviting party:', error);
-      alert('Error inviting party');
+      toast.error(error.message || 'Error inviting party');
     }
   };
 
@@ -526,7 +526,7 @@ export default function ContractManagement() {
                     type="file"
                     id="contract-file"
                     onChange={handleContractFileChange}
-                    accept=".pdf,.docx,.doc"
+                    accept=".pdf,application/pdf"
                     className="hidden"
                     disabled={uploadingContract}
                   />
@@ -535,7 +535,7 @@ export default function ContractManagement() {
                     <p className="text-sm text-foreground">
                       {uploadingContract ? 'Uploading...' : 'Click to upload contract document'}
                     </p>
-                    <p className="text-xs text-muted-foreground mt-1">PDF, DOCX (Max 100MB)</p>
+                    <p className="text-xs text-muted-foreground mt-1">PDF format (Max 10 MB)</p>
                   </label>
                   {contractFile && (
                     <div className="mt-3 flex items-center justify-center gap-2 text-sm text-emerald-500">
@@ -556,7 +556,7 @@ export default function ContractManagement() {
                     type="file"
                     id="attachment-files"
                     onChange={handleAttachmentFilesChange}
-                    accept=".pdf,.docx,.xlsx,.csv,.png,.jpg,.jpeg,.mp4"
+                    accept=".pdf,.png,.jpg,.jpeg,.webp,.svg"
                     multiple
                     className="hidden"
                     disabled={uploadingAttachments}
@@ -566,7 +566,7 @@ export default function ContractManagement() {
                     <p className="text-sm text-foreground">
                       {uploadingAttachments ? 'Uploading...' : 'Click to upload attachments'}
                     </p>
-                    <p className="text-xs text-muted-foreground mt-1">PDF, DOCX, XLSX, CSV, Images, Videos</p>
+                    <p className="text-xs text-muted-foreground mt-1">PDF, Images (PNG, JPG, WEBP, SVG) (Max 10 MB per file)</p>
                   </label>
                 </div>
                 

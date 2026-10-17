@@ -133,3 +133,27 @@ apiClient.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+// Shared authenticated file upload helper. Attaches Authorization header
+// and CSRF token via apiFetch and returns the primary file URL (for PDFs,
+// returns original_pdf_url).
+export async function uploadFile(file, { visibility = 'private' } = {}) {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('visibility', visibility);
+
+  const uploadEndpoint = `${UPLOAD_BASE_URL}/api/uploads`;
+  const response = await apiFetch(uploadEndpoint, {
+    method: 'POST',
+    body: formData,
+    redirectOnUnauthorized: false
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const errorMsg = payload.message || payload.error || `Upload failed with status ${response.status}`;
+    throw new Error(errorMsg);
+  }
+
+  return payload.original_pdf_url || payload.url;
+}

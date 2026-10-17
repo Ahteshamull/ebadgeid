@@ -122,6 +122,18 @@ export function Header({ onMenuClick } = {}) {
     };
     
     checkInitialLanguage();
+
+    const handleProfileUpdate = (event) => {
+      if (event?.detail) {
+        setUser((prev) => ({ ...prev, ...event.detail }));
+      } else {
+        fetchUserData();
+      }
+    };
+    window.addEventListener('user-profile-updated', handleProfileUpdate);
+    return () => {
+      window.removeEventListener('user-profile-updated', handleProfileUpdate);
+    };
   }, [session, sessionLoading])
 
   useEffect(() => {
