@@ -299,7 +299,7 @@ def load_font_from_url(url: str) -> Optional[bytes]:
         return _CUSTOM_FONT_CACHE[url]
     try:
         parsed = urlparse(url)
-        allowed_hosts = {value.strip().lower() for value in os.getenv("TEMPLATE_ALLOWED_HOSTS", "localhost,127.0.0.1,storage,ebadgeid.onrender.com").split(",") if value.strip()}
+        allowed_hosts = {value.strip().lower() for value in os.getenv("TEMPLATE_ALLOWED_HOSTS", "").split(",") if value.strip()}
         if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.hostname.lower() not in allowed_hosts:
             logger.warning("Rejected custom font URL: host not allowed")
             return None
@@ -361,7 +361,7 @@ def load_template_image(url: str) -> Image.Image:
     """Load a template only from explicitly approved storage hosts."""
     try:
         parsed = urlparse(url)
-        allowed_hosts = {value.strip().lower() for value in os.getenv("TEMPLATE_ALLOWED_HOSTS", "localhost,127.0.0.1,storage,ebadgeid.onrender.com").split(",") if value.strip()}
+        allowed_hosts = {value.strip().lower() for value in os.getenv("TEMPLATE_ALLOWED_HOSTS", "").split(",") if value.strip()}
         if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.hostname.lower() not in allowed_hosts:
             logger.warning(f"Template host is not in allowed hosts: {parsed.hostname}")
             if os.getenv("NODE_ENV") != "production":
