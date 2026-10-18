@@ -1,4 +1,6 @@
 const express = require('express');
+const path = require('path');
+const fs = require('fs');
 const dotenv = require('dotenv');
 dotenv.config();
 const helmet = require('helmet');
@@ -117,6 +119,15 @@ app.use(cors((req, callback) => {
 // normalized login identifiers are part of the distributed limit keys.
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
+
+const UPLOAD_DIR = path.join(__dirname, 'uploads');
+if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+app.use('/uploads', express.static(UPLOAD_DIR, {
+  setHeaders(res) {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
+}));
 
 // Strips any $-prefixed or dot-containing key from req.body (e.g. a client
 // sending {"username": {"$ne": null}}) before it can reach a Mongoose
