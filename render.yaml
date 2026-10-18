@@ -8,7 +8,7 @@ services:
     plan: free
     envVars:
       - key: PORT
-        value: 5000
+        value: 10000
       - key: NODE_ENV
         value: development
       - key: MONGO_URI
@@ -22,10 +22,12 @@ services:
       - key: STORAGE_FILE_SIGNING_KEY
         value: abcdef0123456789a1b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef0
       - key: ALLOWED_ORIGINS
-        value: http://localhost:3000
+        value: http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003,https://app.ebadgeid.com
       - key: PUBLIC_API_BASE_URL
-        value: http://localhost:5000
+        value: https://ebadgeid.onrender.com
       - key: PUBLIC_APP_URL
         value: http://localhost:3000
       - key: PUBLIC_STORAGE_BASE_URL
-        value: http://localhost:9000
+        value: https://ebadgeid.onrender.com
+      - key: TEMPLATE_ALLOWED_HOSTS
+        value: localhost,127.0.0.1,storage,ebadgeid.onrender.com
