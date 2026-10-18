@@ -75,7 +75,7 @@ exports.createContract = async (req, res) => {
       return res.status(403).json({ message: 'You are not an employee of this organization' });
     }
 
-    if (req.user.role !== 'admin') {
+    if (!['admin', 'platform_admin'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Only admins can create contracts' });
     }
 
@@ -687,7 +687,7 @@ exports.generateAccessToken = async (req, res) => {
     }
 
     const isCreator = contract.creator_username === req.user.username;
-    if (!isCreator && req.user.role !== 'admin') {
+    if (!isCreator && !['admin', 'platform_admin'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Only creator or admin can generate access tokens' });
     }
 
@@ -749,7 +749,7 @@ exports.removeUser = async (req, res) => {
     const userParty = contract.contract_parties.find(p => p.party_email === email);
     const hasWritePermission = userParty?.contract_permissions?.write;
 
-    if (!isCreator && role !== 'admin' && !hasWritePermission) {
+    if (!isCreator && !['admin', 'platform_admin'].includes(role) && !hasWritePermission) {
       return res.status(403).json({ 
         message: 'Only creator, admin, or users with write permission can remove users' 
       });

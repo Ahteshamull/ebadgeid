@@ -1,6 +1,6 @@
 "use client"
 import React, { useState, useEffect } from 'react';
-import { Search, Plus, Send, Key, FileText, Clock, MessageSquare, AlertTriangle, XCircle, Upload, X, File, Copy } from 'lucide-react';
+import { Search, Plus, Send, Key, FileText, Clock, MessageSquare, AlertTriangle, XCircle, Upload, X, File, Copy, Loader2, Check } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { apiFetch, uploadFile, API_BASE_URL as ROOT_API_BASE_URL, UPLOAD_BASE_URL } from '@/lib/api';
@@ -18,12 +18,13 @@ export default function ContractManagement() {
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [showTokenModal, setShowTokenModal] = useState(false);
   const [selectedContract, setSelectedContract] = useState(null);
-  // The most recently generated access token -- shown in its own dialog
-  // with a copy button (see the "New Access Token" dialog below) instead
-  // of a plain alert(), which lost the token forever if dismissed by
-  // accident.
   const [newAccessToken, setNewAccessToken] = useState(null);
   const [orgCode, setOrgCode] = useState(null);
+
+  // Action loading states
+  const [creatingContract, setCreatingContract] = useState(false);
+  const [invitingParty, setInvitingParty] = useState(false);
+  const [generatingToken, setGeneratingToken] = useState(false);
 
   // File upload states
   const [contractFile, setContractFile] = useState(null);
@@ -199,11 +200,16 @@ export default function ContractManagement() {
 
   // Create contract
   const handleCreateContract = async () => {
+    if (!createForm.contract_title?.trim()) {
+      toast.error('Please enter a contract title');
+      return;
+    }
+    if (!createForm.contract_content_url) {
+      toast.error('Please upload a contract document');
+      return;
+    }
     try {
-      if (!createForm.contract_content_url) {
-        toast.error('Please upload a contract document');
-        return;
-      }
+      setCreatingContract(true);
       const response = await apiFetch(`${API_BASE_URL}/create`, {
         method: 'POST',
         headers: {
@@ -223,12 +229,23 @@ export default function ContractManagement() {
     } catch (error) {
       console.error('Error creating contract:', error);
       toast.error(error.message || 'Error creating contract');
+    } finally {
+      setCreatingContract(false);
     }
   };
 
   // Invite party
   const handleInviteParty = async () => {
+    if (!inviteForm.party_name?.trim()) {
+      toast.error('Please enter the party name');
+      return;
+    }
+    if (!inviteForm.party_email?.trim()) {
+      toast.error('Please enter a valid email address');
+      return;
+    }
     try {
+      setInvitingParty(true);
       const response = await apiFetch(`${API_BASE_URL}/${selectedContract.contract_code}/invite`, {
         method: 'POST',
         headers: {
@@ -248,12 +265,19 @@ export default function ContractManagement() {
     } catch (error) {
       console.error('Error inviting party:', error);
       toast.error(error.message || 'Error inviting party');
+    } finally {
+      setInvitingParty(false);
     }
   };
 
   // Generate access token
   const handleGenerateToken = async () => {
+    if (!tokenForm.email?.trim()) {
+      toast.error('Please select or enter a party email');
+      return;
+    }
     try {
+      setGeneratingToken(true);
       const response = await apiFetch(`${API_BASE_URL}/${selectedContract.contract_code}/generate-token`, {
         method: 'POST',
         headers: {
@@ -266,12 +290,15 @@ export default function ContractManagement() {
         setNewAccessToken({ token: data.access_token, expiresAt: data.expires_at });
         setShowTokenModal(false);
         resetTokenForm();
+        toast.success('Access token generated successfully!');
       } else {
         toast.error(data.message || 'Failed to generate token');
       }
     } catch (error) {
       console.error('Error generating token:', error);
       toast.error('Error generating token');
+    } finally {
+      setGeneratingToken(false);
     }
   };
 
@@ -346,7 +373,7 @@ export default function ContractManagement() {
         </div>
 
         {/* Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
           <SummaryCard
             icon={<FileText className="w-5 h-5" />}
             title="Total Contracts"
@@ -381,22 +408,22 @@ export default function ContractManagement() {
 
         {/* Search and Create */}
         <div className="bg-card rounded-lg shadow-sm border border-border p-4">
-          <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
+          <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
             <div className="relative flex-1 w-full">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-5 h-5" />
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
               <input
                 type="text"
                 placeholder="Search contracts by code or title..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-border bg-background text-foreground rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                className="w-full pl-9 pr-4 py-2 border border-border bg-background text-foreground rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
               />
             </div>
             <button
               onClick={() => setShowCreateModal(true)}
-              className="flex items-center gap-2 bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
+              className="flex items-center justify-center gap-2 bg-blue-600 text-white px-5 py-2 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap cursor-pointer shadow-sm text-sm font-medium"
             >
-              <Plus className="w-5 h-5" />
+              <Plus className="w-4 h-4" />
               Create Contract
             </button>
           </div>
@@ -404,8 +431,8 @@ export default function ContractManagement() {
 
         {/* Contracts Table */}
         <div className="bg-card rounded-lg shadow-sm border border-border overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full">
+          <div className="overflow-x-auto w-full">
+            <table className="w-full min-w-[680px]">
               <thead className="bg-muted/50 border-b border-border">
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Code</th>
@@ -419,7 +446,10 @@ export default function ContractManagement() {
                 {loading ? (
                   <tr>
                     <td colSpan="5" className="px-6 py-8 text-center text-muted-foreground">
-                      Loading contracts...
+                      <div className="flex items-center justify-center gap-2">
+                        <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+                        <span>Loading contracts...</span>
+                      </div>
                     </td>
                   </tr>
                 ) : filteredContracts.length === 0 ? (
@@ -452,19 +482,21 @@ export default function ContractManagement() {
                               setSelectedContract(contract);
                               setShowInviteModal(true);
                             }}
-                            className="flex items-center gap-1 text-blue-600 hover:text-blue-700 hover:bg-blue-500/10 px-3 py-1.5 rounded transition-colors"
+                            className="flex items-center gap-1 text-blue-600 hover:text-blue-700 hover:bg-blue-500/10 px-2.5 py-1.5 rounded transition-colors cursor-pointer text-xs font-medium"
                           >
-                            <Send className="w-4 h-4" />
+                            <Send className="w-3.5 h-3.5" />
                             Invite
                           </button>
                           <button
                             onClick={() => {
                               setSelectedContract(contract);
+                              const initialEmail = contract.contract_parties?.[0]?.party_email || '';
+                              setTokenForm({ email: initialEmail, expires_in_days: 30 });
                               setShowTokenModal(true);
                             }}
-                            className="flex items-center gap-1 text-purple-600 hover:text-purple-700 hover:bg-purple-500/10 px-3 py-1.5 rounded transition-colors"
+                            className="flex items-center gap-1 text-purple-600 hover:text-purple-700 hover:bg-purple-500/10 px-2.5 py-1.5 rounded transition-colors cursor-pointer text-xs font-medium"
                           >
-                            <Key className="w-4 h-4" />
+                            <Key className="w-3.5 h-3.5" />
                             Token
                           </button>
                         </div>
@@ -479,30 +511,35 @@ export default function ContractManagement() {
 
         {/* Create Contract Modal */}
         <Dialog open={showCreateModal} onOpenChange={(open) => setShowCreateModal(open)}>
-          <DialogContent className="sm:max-w-2xl bg-card border-border text-foreground max-h-[90vh] overflow-y-auto">
+          <DialogContent className="w-[95vw] sm:max-w-2xl bg-card border-border text-foreground max-h-[90vh] overflow-y-auto p-4 sm:p-6 rounded-xl">
             <DialogHeader>
-              <DialogTitle className="text-foreground">Create New Contract</DialogTitle>
+              <DialogTitle className="text-foreground text-lg sm:text-xl">Create New Contract</DialogTitle>
+              <DialogDescription className="text-muted-foreground text-xs sm:text-sm">
+                Upload your contract document and define party timeline and attachments.
+              </DialogDescription>
             </DialogHeader>
-            <div className="space-y-4">
+            <div className="space-y-4 mt-2">
               <div>
-                <label className="block text-sm font-medium text-foreground mb-1">Contract Title</label>
+                <label className="block text-sm font-medium text-foreground mb-1">
+                  Contract Title <span className="text-red-500">*</span>
+                </label>
                 <input
                   type="text"
                   value={createForm.contract_title}
                   onChange={(e) => setCreateForm({ ...createForm, contract_title: e.target.value })}
-                  className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                  className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
                   placeholder="Enter contract title"
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-foreground mb-1">Start Date</label>
                   <input
                     type="date"
                     value={createForm.contract_start_date}
                     onChange={(e) => setCreateForm({ ...createForm, contract_start_date: e.target.value })}
-                    className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                    className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
                   />
                 </div>
                 <div>
@@ -511,7 +548,7 @@ export default function ContractManagement() {
                     type="date"
                     value={createForm.contract_end_date}
                     onChange={(e) => setCreateForm({ ...createForm, contract_end_date: e.target.value })}
-                    className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                    className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
                   />
                 </div>
               </div>
@@ -582,8 +619,9 @@ export default function ContractManagement() {
                           </span>
                         </div>
                         <button
+                          type="button"
                           onClick={() => removeAttachment(index)}
-                          className="text-rose-500 hover:text-rose-600"
+                          className="text-rose-500 hover:text-rose-600 cursor-pointer p-1"
                         >
                           <X className="w-4 h-4" />
                         </button>
@@ -593,19 +631,29 @@ export default function ContractManagement() {
                 )}
               </div>
 
-              <div className="flex gap-3 pt-4">
+              <div className="flex flex-col-reverse sm:flex-row gap-3 pt-4">
                 <button
+                  type="button"
                   onClick={() => setShowCreateModal(false)}
-                  className="flex-1 px-4 py-2 border border-border text-foreground rounded-lg hover:bg-muted transition-colors"
+                  disabled={creatingContract}
+                  className="w-full sm:flex-1 px-4 py-2.5 border border-border text-foreground rounded-lg hover:bg-muted transition-colors cursor-pointer disabled:opacity-50 text-sm font-medium"
                 >
                   Cancel
                 </button>
                 <button
+                  type="button"
                   onClick={handleCreateContract}
-                  disabled={!createForm.contract_content_url || uploadingContract || uploadingAttachments}
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={!createForm.contract_content_url || uploadingContract || uploadingAttachments || creatingContract}
+                  className="w-full sm:flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2 text-sm font-medium shadow-sm"
                 >
-                  Create Contract
+                  {creatingContract ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Creating Contract...</span>
+                    </>
+                  ) : (
+                    'Create Contract'
+                  )}
                 </button>
               </div>
             </div>
@@ -614,40 +662,47 @@ export default function ContractManagement() {
 
         {/* Invite Party Modal */}
         <Dialog open={showInviteModal && !!selectedContract} onOpenChange={(open) => { if (!open) setShowInviteModal(false); }}>
-          <DialogContent className="sm:max-w-lg bg-card border-border text-foreground">
+          <DialogContent className="w-[95vw] sm:max-w-lg bg-card border-border text-foreground max-h-[90vh] overflow-y-auto p-4 sm:p-6 rounded-xl">
             <DialogHeader>
-              <DialogTitle className="text-foreground">{selectedContract ? `Invite Party to ${selectedContract.contract_code}` : 'Invite Party'}</DialogTitle>
+              <DialogTitle className="text-foreground text-lg sm:text-xl">{selectedContract ? `Invite Party to ${selectedContract.contract_code}` : 'Invite Party'}</DialogTitle>
+              <DialogDescription className="text-muted-foreground text-xs sm:text-sm">
+                Invite a counterparty or signatory to collaborate on this contract.
+              </DialogDescription>
             </DialogHeader>
             {selectedContract && (
-              <div className="space-y-4">
+              <div className="space-y-4 mt-2">
                 <div>
-                  <label className="block text-sm font-medium text-foreground mb-1">Party Name</label>
+                  <label className="block text-sm font-medium text-foreground mb-1">
+                    Party Name <span className="text-red-500">*</span>
+                  </label>
                   <input
                     type="text"
                     value={inviteForm.party_name}
                     onChange={(e) => setInviteForm({ ...inviteForm, party_name: e.target.value })}
-                    className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                    className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
                     placeholder="John Doe"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-foreground mb-1">Email</label>
+                  <label className="block text-sm font-medium text-foreground mb-1">
+                    Email <span className="text-red-500">*</span>
+                  </label>
                   <input
                     type="email"
                     value={inviteForm.party_email}
                     onChange={(e) => setInviteForm({ ...inviteForm, party_email: e.target.value })}
-                    className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                    className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
                     placeholder="john@example.com"
                   />
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-foreground mb-1">Party Side</label>
                     <input
                       type="text"
                       value={inviteForm.party_side}
                       onChange={(e) => setInviteForm({ ...inviteForm, party_side: e.target.value })}
-                      className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                      className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
                       placeholder="e.g., Client"
                     />
                   </div>
@@ -657,7 +712,7 @@ export default function ContractManagement() {
                       type="text"
                       value={inviteForm.party_role}
                       onChange={(e) => setInviteForm({ ...inviteForm, party_role: e.target.value })}
-                      className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                      className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
                       placeholder="e.g., Signatory"
                     />
                   </div>
@@ -677,25 +732,36 @@ export default function ContractManagement() {
                               [key]: e.target.checked
                             }
                           })}
-                          className="w-4 h-4 text-blue-600 border-border rounded focus:ring-blue-500 bg-background"
+                          className="w-4 h-4 text-blue-600 border-border rounded focus:ring-blue-500 bg-background cursor-pointer"
                         />
                         <span className="text-sm text-foreground capitalize">{key.replace('_', ' ')}</span>
                       </label>
                     ))}
                   </div>
                 </div>
-                <div className="flex gap-3 pt-4">
+                <div className="flex flex-col-reverse sm:flex-row gap-3 pt-4">
                   <button
+                    type="button"
                     onClick={() => setShowInviteModal(false)}
-                    className="flex-1 px-4 py-2 border border-border text-foreground rounded-lg hover:bg-muted transition-colors"
+                    disabled={invitingParty}
+                    className="w-full sm:flex-1 px-4 py-2.5 border border-border text-foreground rounded-lg hover:bg-muted transition-colors cursor-pointer disabled:opacity-50 text-sm font-medium"
                   >
                     Cancel
                   </button>
                   <button
+                    type="button"
                     onClick={handleInviteParty}
-                    className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                    disabled={invitingParty || !inviteForm.party_email || !inviteForm.party_name}
+                    className="w-full sm:flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2 text-sm font-medium shadow-sm"
                   >
-                    Send Invitation
+                    {invitingParty ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>Sending Invitation...</span>
+                      </>
+                    ) : (
+                      'Send Invitation'
+                    )}
                   </button>
                 </div>
               </div>
@@ -705,23 +771,54 @@ export default function ContractManagement() {
 
         {/* Generate Token Modal */}
         <Dialog open={showTokenModal && !!selectedContract} onOpenChange={(open) => { if (!open) setShowTokenModal(false); }}>
-          <DialogContent className="sm:max-w-lg bg-card border-border text-foreground">
+          <DialogContent className="w-[95vw] sm:max-w-lg bg-card border-border text-foreground max-h-[90vh] overflow-y-auto p-4 sm:p-6 rounded-xl">
             <DialogHeader>
-              <DialogTitle className="text-foreground">{selectedContract ? `Generate Access Token for ${selectedContract.contract_code}` : 'Generate Access Token'}</DialogTitle>
+              <DialogTitle className="text-foreground text-lg sm:text-xl">{selectedContract ? `Generate Access Token for ${selectedContract.contract_code}` : 'Generate Access Token'}</DialogTitle>
+              <DialogDescription className="text-muted-foreground text-xs sm:text-sm">
+                Generate an authentication token for a contract party to access and review this contract safely.
+              </DialogDescription>
             </DialogHeader>
             {selectedContract && (
-              <div className="space-y-4">
+              <div className="space-y-4 mt-2">
                 <div>
-                  <label className="block text-sm font-medium text-foreground mb-1">Party Email</label>
+                  <label className="block text-sm font-medium text-foreground mb-1.5">
+                    Party Email <span className="text-red-500">*</span>
+                  </label>
+                  {selectedContract.contract_parties && selectedContract.contract_parties.length > 0 && (
+                    <div className="mb-2.5">
+                      <p className="text-xs text-muted-foreground mb-1.5 font-medium">Select a party from this contract:</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {selectedContract.contract_parties.map((p, idx) => {
+                          const isSelected = tokenForm.email.toLowerCase() === (p.party_email || '').toLowerCase();
+                          return (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => setTokenForm(prev => ({ ...prev, email: p.party_email }))}
+                              className={`text-xs px-2.5 py-1 rounded-full border transition-colors flex items-center gap-1 cursor-pointer ${
+                                isSelected
+                                  ? 'bg-purple-600 text-white border-purple-600 font-medium'
+                                  : 'bg-muted/60 text-foreground border-border hover:bg-muted'
+                              }`}
+                            >
+                              {isSelected && <Check className="w-3 h-3" />}
+                              <span>{p.party_name ? `${p.party_name} (${p.party_email})` : p.party_email}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                   <input
                     type="email"
                     value={tokenForm.email}
                     onChange={(e) => setTokenForm({ ...tokenForm, email: e.target.value })}
-                    className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                    className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none text-sm"
                     placeholder="party@example.com"
                   />
-                  <p className="text-xs text-muted-foreground mt-1">Email must belong to a party in this contract</p>
-                  <p className="text-xs text-muted-foreground">If you want to generate a token for yourself then write your own email.</p>
+                  <p className="text-xs text-muted-foreground mt-1.5">
+                    Email must belong to a party registered in this contract.
+                  </p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-foreground mb-1">Expires In (Days)</label>
@@ -730,22 +827,36 @@ export default function ContractManagement() {
                     min="1"
                     max="365"
                     value={tokenForm.expires_in_days}
-                    onChange={(e) => setTokenForm({ ...tokenForm, expires_in_days: parseInt(e.target.value) })}
-                    className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                    onChange={(e) => setTokenForm({ ...tokenForm, expires_in_days: parseInt(e.target.value) || 30 })}
+                    className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none text-sm"
                   />
                 </div>
-                <div className="flex gap-3 pt-4">
+                <div className="flex flex-col-reverse sm:flex-row gap-3 pt-4">
                   <button
+                    type="button"
                     onClick={() => setShowTokenModal(false)}
-                    className="flex-1 px-4 py-2 border border-border text-foreground rounded-lg hover:bg-muted transition-colors"
+                    disabled={generatingToken}
+                    className="w-full sm:flex-1 px-4 py-2.5 border border-border text-foreground rounded-lg hover:bg-muted transition-colors cursor-pointer disabled:opacity-50 text-sm font-medium"
                   >
                     Cancel
                   </button>
                   <button
+                    type="button"
                     onClick={handleGenerateToken}
-                    className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+                    disabled={generatingToken || !tokenForm.email}
+                    className="w-full sm:flex-1 px-4 py-2.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2 text-sm font-medium shadow-sm"
                   >
-                    Generate Token
+                    {generatingToken ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>Generating Token...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Key className="w-4 h-4" />
+                        <span>Generate Token</span>
+                      </>
+                    )}
                   </button>
                 </div>
               </div>
@@ -755,27 +866,28 @@ export default function ContractManagement() {
 
         {/* New Access Token dialog */}
         <Dialog open={!!newAccessToken} onOpenChange={(open) => { if (!open) setNewAccessToken(null); }}>
-          <DialogContent className="sm:max-w-md bg-card border-border text-foreground">
+          <DialogContent className="w-[95vw] sm:max-w-md bg-card border-border text-foreground p-4 sm:p-6 rounded-xl">
             <DialogHeader>
-              <DialogTitle className="text-foreground">Access Token Generated Successfully</DialogTitle>
-              <DialogDescription className="text-muted-foreground">
+              <DialogTitle className="text-foreground text-lg sm:text-xl">Access Token Generated Successfully</DialogTitle>
+              <DialogDescription className="text-muted-foreground text-xs sm:text-sm">
                 Copy this token now — it won&apos;t be shown again.
                 {newAccessToken?.expiresAt && ` Expires ${new Date(newAccessToken.expiresAt).toLocaleDateString()}.`}
               </DialogDescription>
             </DialogHeader>
             {newAccessToken && (
-              <div className="bg-muted/40 border border-border rounded-lg p-4">
+              <div className="bg-muted/40 border border-border rounded-lg p-3 sm:p-4 mt-3">
                 <div className="flex items-center justify-between mb-2">
                   <label className="text-sm font-medium text-foreground">Access Token</label>
                   <button
+                    type="button"
                     onClick={() => copyTokenToClipboard(newAccessToken.token)}
-                    className="flex items-center gap-1 text-sm px-2 py-1 border border-border rounded-md hover:bg-muted transition-colors text-foreground"
+                    className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 border border-border rounded-md hover:bg-muted transition-colors text-foreground cursor-pointer font-medium"
                   >
-                    <Copy className="w-3 h-3" />
+                    <Copy className="w-3.5 h-3.5" />
                     Copy
                   </button>
                 </div>
-                <code className="font-mono text-sm break-all bg-background text-foreground p-2 rounded border border-border block">
+                <code className="font-mono text-xs sm:text-sm break-all bg-background text-foreground p-2.5 rounded border border-border block select-all">
                   {newAccessToken.token}
                 </code>
               </div>

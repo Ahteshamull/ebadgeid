@@ -11,3 +11,6 @@ private-contracts/*
 !private-contracts/.gitkeep
 backups/*
 !backups/.gitkeep
+.venv/
+__pycache__/
+*.pyc

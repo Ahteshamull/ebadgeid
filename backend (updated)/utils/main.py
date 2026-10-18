@@ -12,6 +12,19 @@ import logging
 import hmac
 from urllib.parse import urlparse
 
+# Automatically load .env if present
+_env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+if os.path.isfile(_env_path):
+    with open(_env_path, "r", encoding="utf-8") as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _v = _line.split("=", 1)
+                _k = _k.strip()
+                _v = _v.strip().strip("'\"")
+                if _k and _k not in os.environ:
+                    os.environ[_k] = _v
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -136,7 +149,7 @@ RELIABLE_GOOGLE_FONTS = [
     "Nunito"
 ]
 
-FONT_CACHE_DIR = os.getenv("FONT_CACHE_DIR", "fonts")
+FONT_CACHE_DIR = os.getenv("FONT_CACHE_DIR", os.path.join(os.path.dirname(__file__), "fonts"))
 os.makedirs(FONT_CACHE_DIR, exist_ok=True)
 
 
@@ -286,7 +299,7 @@ def load_font_from_url(url: str) -> Optional[bytes]:
         return _CUSTOM_FONT_CACHE[url]
     try:
         parsed = urlparse(url)
-        allowed_hosts = {value.strip().lower() for value in os.getenv("TEMPLATE_ALLOWED_HOSTS", "").split(",") if value.strip()}
+        allowed_hosts = {value.strip().lower() for value in os.getenv("TEMPLATE_ALLOWED_HOSTS", "localhost,127.0.0.1,storage").split(",") if value.strip()}
         if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.hostname.lower() not in allowed_hosts:
             logger.warning("Rejected custom font URL: host not allowed")
             return None
@@ -348,7 +361,7 @@ def load_template_image(url: str) -> Image.Image:
     """Load a template only from explicitly approved storage hosts."""
     try:
         parsed = urlparse(url)
-        allowed_hosts = {value.strip().lower() for value in os.getenv("TEMPLATE_ALLOWED_HOSTS", "").split(",") if value.strip()}
+        allowed_hosts = {value.strip().lower() for value in os.getenv("TEMPLATE_ALLOWED_HOSTS", "localhost,127.0.0.1,storage").split(",") if value.strip()}
         if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.hostname.lower() not in allowed_hosts:
             raise HTTPException(status_code=400, detail="Template host is not allowed")
         logger.info(f"Loading template image from: {url}")
