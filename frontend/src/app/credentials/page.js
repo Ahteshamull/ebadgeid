@@ -316,7 +316,8 @@ export default function CredentialManagementPage() {
     });
 
     if (!certResponse.ok) {
-      throw new Error('Certificate generation failed');
+      const errorData = await certResponse.json().catch(() => ({}));
+      throw new Error(errorData.message || 'Certificate generation failed');
     }
 
     const generated = await certResponse.json();

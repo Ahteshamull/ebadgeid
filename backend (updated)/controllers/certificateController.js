@@ -6,6 +6,7 @@ const User = require('../models/user_model');
 const OrganizationAsset = require('../models/organizationAsset');
 const logger = require('../utils/logger');
 const { sanitizeCustomFields } = require('../utils/customFields');
+const { materializeGalleryTemplate } = require('../utils/galleryTemplates');
 
 const UPLOAD_DIR = path.join(__dirname, '..', 'uploads');
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -25,15 +26,46 @@ const signedStorageFileUrl = (base, storageKey) => {
 };
 
 const internalTemplateUrl = value => {
-  const publicBase = process.env.PUBLIC_STORAGE_BASE_URL?.replace(/\/$/, '');
-  const internalBase = process.env.STORAGE_INTERNAL_BASE_URL?.replace(/\/$/, '');
+  const publicBase = (process.env.PUBLIC_STORAGE_BASE_URL || 'http://localhost:9000').replace(/\/$/, '');
+  const internalBase = (process.env.STORAGE_INTERNAL_BASE_URL || 'http://localhost:9000').replace(/\/$/, '');
+  if (!value || typeof value !== 'string') {
+    try {
+      const fallback = materializeGalleryTemplate('classic-gold');
+      return fallback.url.replace(publicBase, internalBase);
+    } catch {
+      return value;
+    }
+  }
+
+  // Handle /api/files/<storageKey> signed URLs
+  if (value.includes('/api/files/')) {
+    const storageKey = value.slice(value.indexOf('/api/files/') + '/api/files/'.length).split(/[?#]/)[0];
+    return signedStorageFileUrl(internalBase, storageKey);
+  }
+
+  // Check for /uploads/<filename> in any URL (e.g. ebadgeid.onrender.com, localhost, etc.)
+  const uploadMatch = value.match(/\/uploads\/([^/?#]+)/);
+  if (uploadMatch) {
+    const filename = uploadMatch[1];
+    const localFilePath = path.join(UPLOAD_DIR, filename);
+    if (fs.existsSync(localFilePath)) {
+      return `${internalBase}/uploads/${filename}`;
+    }
+    // If the file does not exist locally (e.g. legacy remote upload), provide a clean materialized template
+    try {
+      logger.warn('template_file_missing_fallback_used', { requested: filename, fallback: 'classic-gold' });
+      const fallback = materializeGalleryTemplate('classic-gold');
+      return fallback.url.replace(publicBase, internalBase);
+    } catch (e) {
+      logger.error('failed_to_materialize_fallback_template', { error: e.message });
+      return `${internalBase}/uploads/${filename}`;
+    }
+  }
+
   if (publicBase && internalBase && value.startsWith(`${publicBase}/uploads/`)) {
     return `${internalBase}${value.slice(publicBase.length)}`;
   }
-  if (publicBase && internalBase && value.startsWith(`${publicBase}/api/files/`)) {
-    const storageKey = value.slice(`${publicBase}/api/files/`.length).split(/[?#]/)[0];
-    return signedStorageFileUrl(internalBase, storageKey);
-  }
+
   return value;
 };
 
@@ -192,7 +224,11 @@ exports.generateCertificate = async (req, res) => {
         status: response.status,
         detail: detail.slice(0, 500),
       });
-      return res.status(502).json({ message: 'Certificate generation failed' });
+      return res.status(502).json({
+        success: false,
+        message: 'Certificate generation failed: ' + (detail || 'Generator rejected request'),
+        errorType: 'GENERATOR_REJECTED'
+      });
     }
     const contentLength = Number(response.headers.get('content-length') || 0);
     if (contentLength > 15 * 1024 * 1024) throw new Error('Generated certificate is too large');
