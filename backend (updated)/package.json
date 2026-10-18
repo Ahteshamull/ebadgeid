@@ -4,6 +4,8 @@
   "main": "api.js",
   "scripts": {
     "start": "node api.js",
+    "storage": "node storage.js",
+    "certificate": "python -m uvicorn utils.main:app --host 0.0.0.0 --port 8100",
     "migrate": "node scripts/migrate.js",
     "preflight:production": "node ../scripts/preflight-production.js",
     "test": "MONGOMS_VERSION=7.0.14 MONGOMS_DISTRO=ubuntu-22.04 node --test --test-concurrency=1 tests/*.test.js"

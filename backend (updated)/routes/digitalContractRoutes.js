@@ -58,7 +58,7 @@ router.post(
   '/:contract_code/signed-upload',
   authenticateContractAccess,
   (req, res, next) => {
-    if (req.user?.role === 'admin' || req.contractPermissions?.update) return next();
+    if (['admin', 'platform_admin'].includes(req.user?.role) || req.contractPermissions?.update) return next();
     return res.status(403).json({ message: 'Contract update permission required' });
   },
   signedPdfUploadMiddleware,
@@ -69,7 +69,7 @@ router.get(
   '/:contract_code/private-files/:filename',
   authenticateContractAccess,
   (req, res, next) => {
-    if (req.user?.role === 'admin' || req.contractPermissions?.view) return next();
+    if (['admin', 'platform_admin'].includes(req.user?.role) || req.contractPermissions?.view) return next();
     return res.status(403).json({ message: 'Contract view permission required' });
   },
   downloadSignedPdf

@@ -34,11 +34,11 @@ async function attachJwtIdentity(req, token) {
     });
     if (!contract) throw Object.assign(new Error('Contract not found'), { statusCode: 404 });
     const party = contract.contract_parties.find(item => item.party_email === userDetails.email);
-    if (decoded.role !== 'admin' && !party) {
+    if (!['admin', 'platform_admin'].includes(decoded.role) && !party) {
       throw Object.assign(new Error('Contract access denied'), { statusCode: 403 });
     }
     req.contract = contract;
-    req.contractPermissions = decoded.role === 'admin'
+    req.contractPermissions = ['admin', 'platform_admin'].includes(decoded.role)
       ? { view: true, write: true, update: true, add_discussion: true, add_timeline_event: true }
       : party.contract_permissions;
   }

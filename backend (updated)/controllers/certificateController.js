@@ -206,8 +206,19 @@ exports.generateCertificate = async (req, res) => {
     fs.writeFileSync(path.join(UPLOAD_DIR, filename), image, { flag: 'wx' });
     return res.status(201).json({ url: publicFileUrl(filename) });
   } catch (error) {
-    logger.error('certificate_generation_failed', { message: error.message });
-    return res.status(500).json({ message: 'Certificate generation failed' });
+    logger.error('certificate_generation_failed', { message: error.message, stack: error.stack });
+    if (error.cause?.code === 'ECONNREFUSED' || error.message?.includes('fetch failed')) {
+      return res.status(503).json({
+        success: false,
+        message: 'Certificate generation service is currently unreachable on port 8100. Please ensure the certificate service is running.',
+        errorType: 'SERVICE_UNAVAILABLE'
+      });
+    }
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Certificate generation failed',
+      errorType: 'CERTIFICATE_GENERATION_ERROR'
+    });
   }
 };
 

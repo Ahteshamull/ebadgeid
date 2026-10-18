@@ -50,7 +50,8 @@ import {
   CheckCircle2,
   AlertTriangle,
   BarChart3,
-  Users
+  Users,
+  Loader2
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -58,6 +59,7 @@ export default function GoalManagementPage() {
   const { session } = useSession();
   const [goals, setGoals] = useState([]);
   const [open, setOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [statusFilter, setStatusFilter] = useState('all');
   const [formData, setFormData] = useState({
     organization_code: '',
@@ -108,6 +110,7 @@ export default function GoalManagementPage() {
         return;
       }
 
+      setSubmitting(true);
       const response = await apiClient.post('/goals', formData);
       setGoals([...goals, response.data]);
       setOpen(false);
@@ -124,6 +127,8 @@ export default function GoalManagementPage() {
     } catch (error) {
       console.error('Failed to add goal:', error);
       toast.error('Failed to create goal');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -307,10 +312,20 @@ export default function GoalManagementPage() {
                 </div>
                 <Button 
                   onClick={handleSubmit}
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+                  disabled={submitting}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
                 >
-                  <Target className="mr-2 h-4 w-4" />
-                  Create Goal
+                  {submitting ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Creating Goal...
+                    </>
+                  ) : (
+                    <>
+                      <Target className="mr-2 h-4 w-4" />
+                      Create Goal
+                    </>
+                  )}
                 </Button>
               </div>
             </DialogContent>

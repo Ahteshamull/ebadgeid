@@ -60,6 +60,8 @@ export default function ApiKeyManagement() {
   const [apiKeys, setApiKeys] = useState([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [revoking, setRevoking] = useState(false);
   const [showRevokeDialog, setShowRevokeDialog] = useState(false);
   const [keyToRevoke, setKeyToRevoke] = useState(null);
   const [formData, setFormData] = useState({
@@ -93,6 +95,7 @@ export default function ApiKeyManagement() {
 
   const handleSubmit = async () => {
     try {
+      setSubmitting(true);
       const response = await apiClient.post(`/keys/${session.organization_code}`, formData);
       setApiKeys([...apiKeys, response.data]);
       setNewApiKey(response.data.api_key);
@@ -105,11 +108,14 @@ export default function ApiKeyManagement() {
     } catch (error) {
       console.error('Failed to generate API key:', error);
       toast.error('Failed to generate API key');
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const handleRevoke = async (tokenId) => {
     try {
+      setRevoking(true);
       await apiClient.patch(`/keys/revoke/${tokenId}`);
       fetchApiKeys();
       setShowRevokeDialog(false);
@@ -118,6 +124,8 @@ export default function ApiKeyManagement() {
     } catch (error) {
       console.error('Failed to revoke API key:', error);
       toast.error('Failed to revoke API key');
+    } finally {
+      setRevoking(false);
     }
   };
 
@@ -240,10 +248,20 @@ export default function ApiKeyManagement() {
                 </div>
                 <Button 
                   onClick={handleSubmit}
-                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white"
+                  disabled={submitting}
+                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer"
                 >
-                  <Key className="mr-2 h-4 w-4" />
-                  Generate API Key
+                  {submitting ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Generating API Key...
+                    </>
+                  ) : (
+                    <>
+                      <Key className="mr-2 h-4 w-4" />
+                      Generate API Key
+                    </>
+                  )}
                 </Button>
               </div>
             </DialogContent>
@@ -372,9 +390,17 @@ export default function ApiKeyManagement() {
             <AlertDialogCancel className="border-border">Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => keyToRevoke && handleRevoke(keyToRevoke._id)}
-              className="bg-rose-600 hover:bg-rose-700 text-white"
+              disabled={revoking}
+              className="bg-rose-600 hover:bg-rose-700 text-white cursor-pointer"
             >
-              Confirm Revoke
+              {revoking ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Revoking...
+                </>
+              ) : (
+                'Confirm Revoke'
+              )}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

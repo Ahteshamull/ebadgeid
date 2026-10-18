@@ -18,10 +18,10 @@ exports.updateContract = async (req, res) => {
     const email = req.user?.email || req.contractAccess?.email;
     const party = partyFor(contract, email);
     if (!party) return res.status(403).json({ message: 'You are not a party to this contract' });
-    if (!party.accepted && req.user?.role !== 'admin') {
+    if (!party.accepted && !['admin', 'platform_admin'].includes(req.user?.role)) {
       return res.status(403).json({ message: 'Accept the invitation before updating the contract' });
     }
-    if (req.user?.role !== 'admin' && !req.contractPermissions?.update) {
+    if (!['admin', 'platform_admin'].includes(req.user?.role) && !req.contractPermissions?.update) {
       return res.status(403).json({ message: 'Contract update permission required' });
     }
 
@@ -73,7 +73,7 @@ exports.viewContract = async (req, res) => {
     if (!req.user && !party.accepted) {
       return res.status(403).json({ message: 'Please accept the invitation before viewing the contract', requires_acceptance: true });
     }
-    if (req.user?.role !== 'admin' && !req.contractPermissions?.view) {
+    if (!['admin', 'platform_admin'].includes(req.user?.role) && !req.contractPermissions?.view) {
       return res.status(403).json({ message: 'Contract view permission required' });
     }
     const discussion = contract.discussion.map(entry => {
