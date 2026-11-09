@@ -13,7 +13,7 @@ export const metadata = {
 export default function RootLayout({ children }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className="font-sans bg-background text-foreground antialiased min-h-screen">
+      <body className="font-sans bg-background text-foreground antialiased min-h-screen" suppressHydrationWarning>
         <ThemeProvider
           attribute="class"
           defaultTheme="light"

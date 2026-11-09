@@ -2,9 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { exchangeInvitation, readInvitation } from '../src/lib/contract-session.mjs';
 
-test('reads a fragment token without exposing it in the query string', () => {
+test('reads a fragment token and a query token from an email link', () => {
   assert.deepEqual(readInvitation({ pathname: '/collaborate/C-7', search: '', hash: '#accessToken=secret' }), {
     contractCode: 'C-7', accessToken: 'secret'
+  });
+  assert.deepEqual(readInvitation({ pathname: '/collaborate/C-7', search: '?accessToken=from-email', hash: '' }), {
+    contractCode: 'C-7', accessToken: 'from-email'
   });
 });
 

@@ -3,8 +3,12 @@ import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Award, Target, CheckCircle2, TrendingUp, Calendar } from 'lucide-react';
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { apiFetch } from '@/lib/api';
 import { useSession } from '@/hooks/use-session';
+
+const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 // This page used to render a single hardcoded object — "Good Evening, Lisa
 // Thompson" for every single user regardless of who was actually logged
@@ -38,7 +42,12 @@ export default function EmployeeDashboard() {
 
   useEffect(() => {
     const username = session?.username;
-    if (sessionLoading || !username) return;
+    if (sessionLoading) return;
+    if (!username) {
+      setIsLoading(false);
+      setError('Sign in to view your dashboard.');
+      return;
+    }
 
     const fetchPerformance = async () => {
       try {
@@ -80,6 +89,21 @@ export default function EmployeeDashboard() {
 
   const achievements = data.achievements || [];
   const recentAchievements = achievements.slice(0, 5);
+  const monthlyProgress = (Array.isArray(data.charts?.monthly_progress) ? data.charts.monthly_progress : [])
+    .map((entry) => ({
+      label: `${MONTH_LABELS[(Number(entry.month) || 1) - 1] || entry.month} ${entry.year || ''}`.trim(),
+      count: Number(entry.count) || 0,
+      sort: (Number(entry.year) || 0) * 100 + (Number(entry.month) || 0),
+    }))
+    .sort((a, b) => a.sort - b.sort);
+  const credentialTypes = (Array.isArray(data.charts?.credential_types) ? data.charts.credential_types : [])
+    .filter((entry) => entry && entry.count > 0)
+    .map((entry) => ({ type: entry.type || 'Unspecified', count: Number(entry.count) || 0 }));
+  const weeklyPerformance = (Array.isArray(data.charts?.weekly_performance) ? data.charts.weekly_performance : [])
+    .map((entry) => ({
+      day: WEEKDAY_LABELS[(Number(entry.day) || 1) - 1] || `Day ${entry.day}`,
+      count: Number(entry.count) || 0,
+    }));
 
   return (
     <div className="w-full space-y-8">
@@ -133,6 +157,72 @@ export default function EmployeeDashboard() {
             </CardContent>
           </Card>
         </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <Card className="bg-card border-border">
+            <CardHeader>
+              <CardTitle className="text-lg">Credentials by month</CardTitle>
+              <CardDescription>Issued credentials counted from your records</CardDescription>
+            </CardHeader>
+            <CardContent className="h-64">
+              {monthlyProgress.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-8 text-center">No credentials recorded yet.</p>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={monthlyProgress}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
+                    <Tooltip />
+                    <Bar dataKey="count" name="Credentials" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="bg-card border-border">
+            <CardHeader>
+              <CardTitle className="text-lg">This week</CardTitle>
+              <CardDescription>Credentials created during the current week</CardDescription>
+            </CardHeader>
+            <CardContent className="h-64">
+              {weeklyPerformance.every((entry) => entry.count === 0) ? (
+                <p className="text-sm text-muted-foreground py-8 text-center">No credentials created this week.</p>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={weeklyPerformance}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="day" tick={{ fontSize: 12 }} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
+                    <Tooltip />
+                    <Bar dataKey="count" name="Credentials" fill="#10b981" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        {credentialTypes.length > 0 && (
+          <Card className="bg-card border-border">
+            <CardHeader>
+              <CardTitle className="text-lg">Credential types</CardTitle>
+              <CardDescription>Counts grouped by the type stored on each credential</CardDescription>
+            </CardHeader>
+            <CardContent className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={credentialTypes} layout="vertical" margin={{ left: 24 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" allowDecimals={false} tick={{ fontSize: 12 }} />
+                  <YAxis type="category" dataKey="type" width={120} tick={{ fontSize: 12 }} />
+                  <Tooltip />
+                  <Bar dataKey="count" name="Credentials" fill="#3b82f6" radius={[0, 4, 4, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Recent Achievements — real credential records */}
         <Card className="bg-card border-border shadow-md">

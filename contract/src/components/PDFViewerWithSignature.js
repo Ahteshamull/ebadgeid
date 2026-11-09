@@ -24,8 +24,10 @@ try {
     console.warn('[PDF] CSS files not found, continuing without them');
 }
 
-// Set worker - using the exact version that matches pdfjs
-pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
+// Must be the worker shipped with the pdfjs-dist that react-pdf imports
+// (currently 4.8.69). The top-level pdfjs-dist package is a different
+// version, and a mismatched worker refuses to open the PDF.
+pdfjs.GlobalWorkerOptions.workerSrc = `/pdf.worker.min.mjs?v=${pdfjs.version}`;
 
 import { API_BASE_URL } from '@/lib/config';
 

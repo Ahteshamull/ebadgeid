@@ -9,11 +9,9 @@ import {
   Settings, 
   HelpCircle,
   Users,
-  Target,
   Fingerprint,
   Verified,
   Aperture,
-  Thermometer,
   ChevronDown,
   ChevronRight,
   Crown,
@@ -28,8 +26,6 @@ import {
   Mail,
   ExternalLink,
   Award,
-  FileCheck,
-  Palette,
   X as XIcon
 } from "lucide-react"
 
@@ -91,14 +87,6 @@ const sidebarItems = [
     description: "Manage Contracts"
   },
   {
-    id: "my_goals",
-    href: "/my_goals",
-    title: "My Goals",
-    icon: <Target className="h-4 w-4" />,
-    roles: ['user'],
-    description: "Track Objectives"
-  },
-  {
     id: "issue_credential",
     href: '/credentials',
     title: "Manage Credentials",
@@ -107,27 +95,19 @@ const sidebarItems = [
     description: "Issue & Track Credentials"
   },
   {
-    id: "credential_designer",
-    href: '/credentials/design-editor',
-    title: "Credential Designer",
-    icon: <Palette className="h-4 w-4" />,
+    id: "api_tokens",
+    href: "/api_tokens",
+    title: "API Tokens",
+    icon: <Key className="h-4 w-4" />,
     roles: ["admin", "platform_admin"],
-    description: "Design Certificates & Badges"
-  },
-  {
-    id: "manage_goals",
-    href: '/goals',
-    title: "Manage Goals",
-    icon: <Thermometer className="h-4 w-4" />,
-    roles: ["teacher", "admin"],
-    description: "Goal System"
+    description: "Issue and revoke organization API tokens"
   },
   {
     id: "platform_payments",
     href: '/platform/payments',
     title: "Payment Approvals",
     icon: <CreditCard className="h-4 w-4" />,
-    roles: ["platform_admin", "admin"],
+    roles: ["platform_admin"],
     description: "Review and approve paid self-signups"
   },
   {
@@ -387,7 +367,9 @@ export function Sidebar({ open = false, onClose }) {
           
             <div className="space-y-1">
               {filteredSidebarItems.map((item) => {
-                const isActive = pathname === item.href || (item.href === '/credentials/design-editor' && (pathname?.startsWith('/credentials/design-editor') || pathname === '/credentials/certificates' || pathname === '/credentials/badges'));
+                // The designer is reached from Manage Credentials rather
+                // than its own sidebar entry.
+                const isActive = pathname === item.href || (item.href === '/credentials' && pathname?.startsWith('/credentials/'));
                 
                 return (
                   <div key={item.id} className="group">

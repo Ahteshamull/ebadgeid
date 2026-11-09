@@ -1,5 +1,14 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+    // Next.js 16 blocks dev chunks when the browser host is 127.0.0.1
+    // instead of localhost, which leaves client pages stuck on their
+    // server-rendered loading text.
+    allowedDevOrigins: ['127.0.0.1', '**.trycloudflare.com'],
+    // Server Actions posted from the shared link must be accepted there.
+    // Without this, Next sends the action to localhost:3000.
+    serverActions: {
+      allowedOrigins: ['**.trycloudflare.com'],
+    },
     // Conditional on purpose -- see frontend_super_admin/next.config.mjs
     // for the full reasoning: Docker needs standalone output, but the VPS
     // serves this app with `next start`, which refuses to run a
@@ -50,10 +59,18 @@ const nextConfig = {
       ];
     },
     async rewrites() {
-      const backend = (process.env.SAML_BACKEND_URL || process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/api\/?$/, '') || 'http://localhost:5000').replace(/\/$/, '');
+      const configuredApi = process.env.NEXT_PUBLIC_API_BASE_URL || '';
+      const apiOrigin = /^https?:\/\//i.test(configuredApi) ? configuredApi.replace(/\/api\/?$/, '') : '';
+      const backend = (process.env.SAML_BACKEND_URL || apiOrigin || 'http://localhost:5000').replace(/\/$/, '');
+      // Certificate backgrounds are private files at /api/files/:key. That
+      // route exists only on the storage service (port 9000). The general
+      // /api rewrite below sends everything else to the main API, which
+      // answers /api/files with a 404, so the canvas stays blank.
+      const storage = (process.env.STORAGE_BACKEND_URL || 'http://127.0.0.1:9000').replace(/\/$/, '');
       return [
-        { source: '/api/auth/saml/:path*', destination: `${backend}/api/auth/saml/:path*` },
-        { source: '/api/credentials/by-code/:path*', destination: `${backend}/api/credentials/by-code/:path*` },
+        { source: '/api/files/:storageKey', destination: `${storage}/api/files/:storageKey` },
+        { source: '/api/:path*', destination: `${backend}/api/:path*` },
+        { source: '/uploads/:path*', destination: `${backend}/uploads/:path*` },
       ];
     },
     compiler: {
@@ -80,6 +97,7 @@ const nextConfig = {
       // — profile pictures (users/page.js) are served from here in any
       // deployment that isn't pointed at ftp.ebadgeid.com explicitly.
       { protocol: 'http', hostname: 'localhost', port: '9000' },
+      { protocol: 'http', hostname: 'localhost', port: '5000' },
     ],
   },
   }

@@ -63,7 +63,7 @@ import {
   clearLocalStorageCache
 } from '@/lib/pdfService';
 
-import { API_BASE_URL } from '@/lib/config';
+import { API_BASE_URL, MAIN_APP_URL, SUPPORT_EMAIL } from '@/lib/config';
 import { exchangeInvitation, readInvitation } from '@/lib/contract-session.mjs';
 
 import dynamic from 'next/dynamic';
@@ -72,6 +72,46 @@ const PDFViewerWithSignature = dynamic(
   () => import('@/components/PDFViewerWithSignature'),
   { ssr: false }
 );
+
+function OrgLogo({ contract }) {
+  const [failed, setFailed] = useState(false);
+  const name = contract.organization_detail?.name || '';
+  if (!contract.organization_detail?.logo || failed) {
+    return <div className="h-12 w-12 rounded bg-slate-100 flex items-center justify-center font-semibold text-slate-600">{name[0] || 'O'}</div>;
+  }
+  return (
+    <img
+      src={`${API_BASE_URL}/contracts/${encodeURIComponent(contract.contract_code)}/organization-logo`}
+      alt=""
+      className="h-12 w-12 object-contain rounded bg-white"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
+function discussionAuthor(message) {
+  return message.sender_username || message.sender_email || 'Unknown';
+}
+
+function signFailureMessage(error) {
+  const text = String(error?.message || '');
+  if (/update permission/i.test(text)) return 'You do not have permission to sign this contract.';
+  if (/accept the invitation/i.test(text)) return 'Accept the invitation before signing.';
+  if (/already signed/i.test(text)) return 'You have already signed this contract.';
+  return 'Could not sign the contract. Please try again.';
+}
+
+// Signed copies are stored with the API's own origin, which the visitor's
+// browser may not be able to reach. This app proxies /api, so keep only
+// the path.
+const contractApiPath = (value) => {
+  try {
+    const { pathname, search } = new URL(value);
+    return pathname.startsWith('/api/contracts/') ? `${pathname}${search}` : value;
+  } catch {
+    return value;
+  }
+};
 
 // Signature Canvas Component
 const SignatureCanvas = ({ width, height, onSignatureComplete }) => {
@@ -194,6 +234,14 @@ const SignatureDialog = ({
   const [uploadError, setUploadError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [progressStatus, setProgressStatus] = useState('');
+  const [notice, setNotice] = useState('');
+  const noticeTimer = useRef(null);
+
+  const showNotice = (message) => {
+    setNotice(message);
+    window.clearTimeout(noticeTimer.current);
+    noticeTimer.current = window.setTimeout(() => setNotice(''), 4000);
+  };
 
   // Handle position selection
   const handlePositionSelect = (position) => {
@@ -235,7 +283,7 @@ const SignatureDialog = ({
   // Submit signature
   const handleSubmitSignature = async () => {
     if (!signatureData) {
-      alert('Please create or upload a signature first');
+      showNotice('Add a signature before signing.');
       return;
     }
 
@@ -315,7 +363,7 @@ const SignatureDialog = ({
     } catch (error) {
       console.error('[SignatureDialog] Signature submission error:', error);
       // Keep the cache in case of error for recovery
-      alert(`Failed to sign contract: ${error.message}`);
+      showNotice(signFailureMessage(error));
     } finally {
       setIsSubmitting(false);
       setProgressStatus('');
@@ -323,6 +371,12 @@ const SignatureDialog = ({
   };
 
   return (
+    <>
+    {notice && (
+      <div role="status" className="fixed bottom-4 left-1/2 z-[80] -translate-x-1/2 rounded-lg bg-slate-900 px-4 py-2 text-sm text-white shadow-lg">
+        {notice}
+      </div>
+    )}
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="w-full max-h-[95vh] overflow-y-auto sm:max-w-2/3 sm:max-h-2/3">
         <DialogHeader>
@@ -557,6 +611,7 @@ const SignatureDialog = ({
         </div>
       </DialogContent>
     </Dialog>
+    </>
   );
 };
 
@@ -602,6 +657,8 @@ export default function ContractCollaborationPage() {
         if (data.requires_acceptance) {
           setRequiresAcceptance(true);
           setError(data.message);
+        } else if (res.status === 401) {
+          throw new Error('Open this contract from the invitation link in your email.');
         } else {
           throw new Error(data.message || 'Failed to fetch contract');
         }
@@ -616,25 +673,24 @@ export default function ContractCollaborationPage() {
   }, [contractCode]);
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
+    if (typeof window === 'undefined') return undefined;
+    let cancelled = false;
+    const open = async () => {
       const { contractCode: codeFromPath, accessToken: tokenFromQuery } = readInvitation(window.location);
-
       if (codeFromPath === contractCode && tokenFromQuery) {
-        exchangeInvitation(API_BASE_URL, tokenFromQuery).then(() => {
-          window.history.replaceState({}, '', window.location.pathname);
-          setAccessToken('cookie');
-          return fetchContract();
-        }).catch(reason => {
-          setError(reason.message);
-          setLoading(false);
-        });
-      } else {
-        queueMicrotask(() => {
-          setError('Missing contract code or access token in URL');
-          setLoading(false);
-        });
+        await exchangeInvitation(API_BASE_URL, tokenFromQuery);
+        if (cancelled) return;
+        window.history.replaceState({}, '', window.location.pathname);
+        setAccessToken('cookie');
       }
-    }
+      await fetchContract();
+    };
+    open().catch(reason => {
+      if (cancelled) return;
+      setError(reason.message || 'Unable to open this contract.');
+      setLoading(false);
+    });
+    return () => { cancelled = true; };
   }, [contractCode, fetchContract]);
 
   const handleAcceptInvitation = async () => {
@@ -881,9 +937,9 @@ export default function ContractCollaborationPage() {
               </div>
             </div>
             <nav className="hidden md:flex items-center gap-8">
-              <a href="#" className="text-sm font-medium text-slate-600 hover:text-primary transition-colors duration-200">Contracts</a>
-              <a href="#" className="text-sm font-medium text-slate-600 hover:text-primary transition-colors duration-200">Dashboard</a>
-              <a href="#" className="text-sm font-medium text-slate-600 hover:text-primary transition-colors duration-200">Support</a>
+              <a href={`${MAIN_APP_URL}/manage_contracts`} className="text-sm font-medium text-slate-600 hover:text-primary transition-colors duration-200">Contracts</a>
+              <a href={`${MAIN_APP_URL}/`} className="text-sm font-medium text-slate-600 hover:text-primary transition-colors duration-200">Dashboard</a>
+              <a href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(`Contract ${contractCode} support request`)}`} className="text-sm font-medium text-slate-600 hover:text-primary transition-colors duration-200">Support</a>
             </nav>
           </div>
         </div>
@@ -924,7 +980,7 @@ export default function ContractCollaborationPage() {
                           contractCode={contractCode}
                           accessToken={accessToken}
                           contractTitle={contract.contract_title}
-                          pdfUrl={contract.contract_content_url}
+                          pdfUrl={contract.contract_code}
                           onSignatureComplete={handleSignatureComplete}
                         />
                       </>
@@ -1075,7 +1131,7 @@ export default function ContractCollaborationPage() {
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="flex items-center gap-3">
-                      {contract.organization_detail.logo ? (<img src={contract.organization_detail.logo} alt="Org logo" className="h-12 w-12 object-contain rounded" />) : (<div className="h-12 w-12 rounded bg-slate-100 flex items-center justify-center">{contract.organization_detail.name?.[0]}</div>)}
+                      <OrgLogo contract={contract} />
                       <div>
                         <p className="font-semibold">{contract.organization_detail.name}</p>
                         <p className="text-xs text-muted-foreground">Created by {contract.creator_details.first_name} {contract.creator_details.last_name}</p>
@@ -1091,14 +1147,14 @@ export default function ContractCollaborationPage() {
 
                     <div className="space-y-2">
                       <p className="text-sm font-medium">Attachments</p>
-                      {contract.contract_attachments.length === 0 ? (<p className="text-xs text-muted-foreground">No attachments</p>) : (<div className="space-y-2">{contract.contract_attachments.map((a, i) => (<a key={i} href={a} target="_blank" rel="noreferrer" className="text-sm text-primary underline">Attachment {i + 1}</a>))}</div>)}
+                      {contract.contract_attachments.length === 0 ? (<p className="text-xs text-muted-foreground">No attachments</p>) : (<div className="space-y-2">{contract.contract_attachments.map((a, i) => (<a key={i} href={`${API_BASE_URL}/contracts/${encodeURIComponent(contract.contract_code)}/attachments/${i}`} target="_blank" rel="noreferrer" className="text-sm text-primary underline">Attachment {i + 1}</a>))}</div>)}
                     </div>
 
                     <div>
                       {accessToken && contract.contract_content_url && (
                         <Button asChild className="w-full">
                           <a
-                            href={contract.contract_content_url}
+                            href={`${API_BASE_URL}/contracts/${encodeURIComponent(contract.contract_code)}/document`}
                             target="_blank"
                             rel="noreferrer"
                           >
@@ -1167,7 +1223,7 @@ export default function ContractCollaborationPage() {
                       <CardHeader><CardTitle>Messages</CardTitle><CardDescription className="text-sm">Team conversation about the contract</CardDescription></CardHeader>
                       <CardContent>
                         <ScrollArea className="h-[420px] pr-4">
-                          {contract.discussion.length === 0 ? (<div className="flex flex-col items-center justify-center h-full text-center py-12"><MessageSquare className="h-12 w-12 text-muted-foreground mb-4" /><p className="text-muted-foreground">No messages yet</p></div>) : (<div className="space-y-4">{contract.discussion.map((m) => (<div key={m.message_id} className="flex gap-3"><Avatar className="h-10 w-10"><AvatarFallback>{getInitials(m.sender_party_name || m.sender_email)}</AvatarFallback></Avatar><div className="flex-1"><div className="bg-slate-50 rounded-lg p-3"><div className="flex items-center justify-between mb-1"><p className="font-medium text-sm">{m.sender_party_name || m.sender_email}</p><span className="text-xs text-muted-foreground">{formatDateTime(m.timestamp)}</span></div><p className="text-sm">{m.message}</p></div></div></div>))}</div>)}
+                          {contract.discussion.length === 0 ? (<div className="flex flex-col items-center justify-center h-full text-center py-12"><MessageSquare className="h-12 w-12 text-muted-foreground mb-4" /><p className="text-muted-foreground">No messages yet</p></div>) : (<div className="space-y-4">{contract.discussion.map((m) => (<div key={m.message_id} className="flex gap-3"><Avatar className="h-10 w-10"><AvatarFallback>{getInitials(discussionAuthor(m))}</AvatarFallback></Avatar><div className="flex-1"><div className="bg-slate-50 rounded-lg p-3"><div className="flex items-center justify-between mb-1"><p className="font-medium text-sm">{discussionAuthor(m)}</p><span className="text-xs text-muted-foreground">{formatDateTime(m.timestamp)}</span></div><p className="text-sm">{m.message}</p></div></div></div>))}</div>)}
                         </ScrollArea>
                       </CardContent>
 
@@ -1223,7 +1279,7 @@ export default function ContractCollaborationPage() {
                                   </div>
                                   <div className="flex items-center gap-2">
                                     <a
-                                      href={copy.signed_copy_url}
+                                      href={contractApiPath(copy.signed_copy_url)}
                                       download={copy.attachment_name || `signed_contract_${idx + 1}.pdf`}
                                       target="_blank"
                                       rel="noreferrer"

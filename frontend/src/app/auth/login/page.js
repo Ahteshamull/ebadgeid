@@ -17,6 +17,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [notice, setNotice] = useState("")
+  const [activationUrl, setActivationUrl] = useState("")
 
   useEffect(() => {
     // Prime the cross-subdomain synchronizer token before a user submits a
@@ -61,6 +62,7 @@ export default function LoginPage() {
   async function resendActivation() {
     setError("")
     setNotice("")
+    setActivationUrl("")
     try {
       const csrfToken = await ensureCsrfToken()
       const response = await fetch(`${API_BASE_URL}/auth/resend-activation`, {
@@ -71,6 +73,7 @@ export default function LoginPage() {
       })
       const result = await response.json().catch(() => ({}))
       setNotice(result.message || "If this account is awaiting activation, a new link will be sent.")
+      if (typeof result.development_activation_url === "string") setActivationUrl(result.development_activation_url)
     } catch {
       setError("Unable to request a new activation link")
     }
@@ -85,13 +88,13 @@ export default function LoginPage() {
           </div>
           <div>
             <CardTitle as="h1" className="text-2xl">Sign in to eBadge ID</CardTitle>
-            <CardDescription>Secure access to credentials, goals and contracts</CardDescription>
+            <CardDescription>Secure access to credentials and contracts</CardDescription>
           </div>
         </CardHeader>
         <CardContent>
           <form onSubmit={submit} className="space-y-4">
             {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
-            {notice && <Alert><AlertDescription>{notice}</AlertDescription></Alert>}
+            {notice && <Alert><AlertDescription>{notice}{activationUrl && <> <a className="font-medium text-indigo-700 underline" href={activationUrl}>Open activation link</a></>}</AlertDescription></Alert>}
             <div className="space-y-2">
               <Label htmlFor="username">Username or email</Label>
               <Input id="username" autoComplete="username" value={username} onChange={event => setUsername(event.target.value)} required />

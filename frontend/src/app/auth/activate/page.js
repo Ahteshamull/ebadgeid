@@ -9,6 +9,26 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 
+const ACTIVATION_STORAGE_KEY = "ebadge_activation_link"
+
+function readActivationLink() {
+  if (typeof window === "undefined") return { username: "", token: "", setup: false }
+  const query = new URLSearchParams(window.location.search)
+  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""))
+  const username = query.get("username") || hash.get("username") || ""
+  const token = query.get("token") || hash.get("token") || ""
+  const setup = (query.get("setup_password") || hash.get("setup_password")) === "1"
+  if (token) {
+    sessionStorage.setItem(ACTIVATION_STORAGE_KEY, JSON.stringify({ username, token, setup }))
+    return { username, token, setup }
+  }
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(ACTIVATION_STORAGE_KEY) || "null")
+    if (saved?.token) return { username: saved.username || "", token: saved.token, setup: Boolean(saved.setup) }
+  } catch {}
+  return { username: "", token: "", setup: false }
+}
+
 export default function ActivateAccountPage() {
   const [credentials, setCredentials] = useState({ username: "", token: "" })
   const [password, setPassword] = useState("")
@@ -18,9 +38,10 @@ export default function ActivateAccountPage() {
   const [requiresPasswordSetup, setRequiresPasswordSetup] = useState(false)
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.hash.replace(/^#/, ""))
-    setCredentials({ username: params.get("username") || "", token: params.get("token") || "" })
-    setRequiresPasswordSetup(params.get("setup_password") === "1")
+    const link = readActivationLink()
+    if (!link.token) return
+    setCredentials({ username: link.username, token: link.token })
+    setRequiresPasswordSetup(link.setup)
     window.history.replaceState({}, "", window.location.pathname)
   }, [])
 
@@ -50,6 +71,7 @@ export default function ActivateAccountPage() {
         return
       }
       if (!response.ok) throw new Error(result.message || "Activation failed")
+      sessionStorage.removeItem(ACTIVATION_STORAGE_KEY)
       window.location.assign("/auth/login?activated=1")
     } catch (requestError) {
       setError(requestError.message || "Activation failed")

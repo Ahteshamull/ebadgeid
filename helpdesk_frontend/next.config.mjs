@@ -2,6 +2,17 @@
 const nextConfig = {
     output: 'standalone',
     reactStrictMode: true,
+    allowedDevOrigins: ['127.0.0.1'],
+    async rewrites() {
+      const configuredApi = process.env.NEXT_PUBLIC_HELPDESK_API_URL || '';
+      const helpOrigin = /^https?:\/\//i.test(configuredApi)
+        ? configuredApi.replace(/\/api\/?$/, '')
+        : (process.env.HELPDESK_BACKEND_URL || 'http://localhost:8000');
+      const backend = helpOrigin.replace(/\/$/, '');
+      return [
+        { source: '/api/:path*', destination: `${backend}/api/:path*` },
+      ];
+    },
     compiler: {
       // Disable the "N" development indicator
       reactRemoveProperties: process.env.NODE_ENV === 'production',

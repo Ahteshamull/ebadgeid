@@ -35,7 +35,7 @@ test('formatUserDataForExport properly maps user fields and trims combined name'
     Location: 'Austin, Texas, USA',
     Email: 'john.doe@example.com',
     Phone: '+1-555-0199',
-    Status: 'active'
+    Status: 'Active'
   });
 });
 
@@ -138,13 +138,16 @@ test('generateUserExcelWorkbook creates valid workbook even when user list is em
 test('generateUserExcelWorkbook creates populated workbook for multiple users', () => {
   const users = [
     { username: 'u1', first_name: 'User', last_name: 'One', email: 'u1@test.com', status: 'active' },
-    { username: 'u2', first_name: 'User', last_name: 'Two', email: 'u2@test.com', status: 'inactive' }
+    { username: 'u2', first_name: 'User', last_name: 'Two', email: 'u2@test.com', status: 'Active' },
+    { username: 'u3', first_name: 'User', last_name: 'Three', email: 'u3@test.com', status: 'inactive' }
   ];
 
   const wb = generateUserExcelWorkbook(XLSX, users);
   const sheet = wb.Sheets['Users'];
   const json = XLSX.utils.sheet_to_json(sheet);
-  assert.equal(json.length, 2);
+  assert.equal(json.length, 3);
   assert.equal(json[0].Username, 'u1');
-  assert.equal(json[1].Username, 'u2');
+  assert.equal(json[0].Status, 'Active');
+  assert.equal(json[1].Status, 'Active');
+  assert.equal(json[2].Status, 'Inactive');
 });

@@ -18,6 +18,7 @@ const User = require('./models/User');
 const Ticket = require('./models/tickets');
 const Article = require('./models/articleSchema');
 const FAQ = require('./models/faqSchema');
+const Organization = require('./models/organization');
 
 const authRoutes = require('./routes/authRoutes');
 const organizationRoutes = require('./routes/organizationController');
@@ -260,8 +261,28 @@ async function shutdown(signal) {
   await mongoose.connection.close();
 }
 
+async function ensureLocalDevOrganization() {
+  if (process.env.NODE_ENV === 'production') return;
+  const code = process.env.DEFAULT_ORG_CODE;
+  if (!code) return;
+  await Organization.updateOne(
+    { organization_code: code },
+    {
+      $setOnInsert: {
+        organization_code: code,
+        name: 'Local Development',
+        support_email: `support@${code}.local`,
+        city: 'Local',
+        country: 'Local',
+      },
+    },
+    { upsert: true }
+  );
+}
+
 async function startServer() {
   await connectDB();
+  await ensureLocalDevOrganization();
   websocketServer = initWebSocket(server);
   app.set('wsServer', websocketServer);
   const port = Number.parseInt(process.env.PORT || '8000', 10);

@@ -2,7 +2,7 @@ const transporter = require("./gmailTransport");
 
 const sendOtpEmail = async (to, otp) => {
   const mailOptions = {
-    from: `"Helpdesk Support" <${process.env.GMAIL_USER}>`,
+    from: `"Helpdesk Support" <${process.env.GMAIL_USER || process.env.EMAIL_USER || process.env.SMTP_USER || 'helpdesk@ebadgeid.local'}>`,
     to,
     subject: "Your Helpdesk OTP Code",
     html: `

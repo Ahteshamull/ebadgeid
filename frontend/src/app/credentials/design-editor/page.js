@@ -3,14 +3,14 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import {
   Plus, Type, QrCode, Trash2, Save, Image as ImageIcon, Loader2, LayoutTemplate, Undo2, Redo2, Lock, Unlock,
-  ArrowUp, ArrowDown, Grid3X3, Group, Ungroup, ZoomIn, ZoomOut, Upload, Download, ChevronDown,
+  ArrowUp, ArrowDown, Grid3X3, Group, Ungroup, Upload, Download, ChevronDown,
   Square, Circle as CircleIcon, Minus, Sparkles, History, MessageSquare, Users, X as XIcon, RotateCw,
   Linkedin, Globe, Archive, ArchiveRestore, Copy, FileCheck, Share2, Palette, Building, Signature,
   FileText, Award, ArrowLeft, Eye, AlertCircle, CheckCircle2,
 } from 'lucide-react';
 import { apiFetch, API_BASE_URL } from '@/lib/api';
 import { useSession } from '@/hooks/use-session';
-import { assignGroup, clampZoom, calculateFitZoom, reorderLayer, resolveEditorUploadUrl } from '@/lib/editor-utils.mjs';
+import { assignGroup, reorderLayer, resolveEditorUploadUrl } from '@/lib/editor-utils.mjs';
 import { TEMPLATE_LIBRARY } from '@/lib/template-library';
 import { validateAssetFile, cleanAssetName } from '@/lib/asset-upload-utils.mjs';
 
@@ -22,11 +22,13 @@ import { validateAssetFile, cleanAssetName } from '@/lib/asset-upload-utils.mjs'
 // AUDIT_FIXES.md for the full list and what's intentionally out of scope --
 // no live cursors or operational-transform merging).
 //
-// Canvas size mirrors a standard landscape certificate at a manageable
-// on-screen scale; positions are stored in these same canvas pixels, so
-// what you see here is what the certificate generation service places.
+// Certificate page is A4 landscape (297×210mm). 900×636 is that ratio, and
+// positions are stored in these canvas pixels so the certificate service
+// places text where the editor shows it. The on-screen sheet is always this
+// A4 page, scaled to fit the workspace — there is no zoom control.
+const A4_RATIO = 297 / 210;
 const CANVAS_W = 900;
-const CANVAS_H = 636; // ~ US Letter landscape ratio
+const CANVAS_H = 636;
 // Badges are square by convention (LinkedIn, Credly and Open Badges all
 // render them that way), not landscape like a certificate.
 const BADGE_CANVAS = 600;
@@ -187,6 +189,15 @@ const OPPOSITE_EDGE_LOCAL = {
 };
 const EDGE_HANDLES = new Set(['n', 's', 'e', 'w']);
 
+// ?returnTo= is set when the editor is opened from the issue-credential
+// modal (credentials/page.js openDesignEditor). Only same-site paths are
+// accepted so the link can't send anyone off to another site.
+function readReturnTo() {
+  if (typeof window === 'undefined') return null;
+  const value = new URLSearchParams(window.location.search).get('returnTo');
+  return value && value.startsWith('/') && !value.startsWith('//') ? value : null;
+}
+
 export default function DesignEditorPage({ initialKind } = {}) {
   const { session } = useSession();
   const [designKind, setDesignKind] = useState(initialKind || 'certificate');
@@ -252,9 +263,13 @@ export default function DesignEditorPage({ initialKind } = {}) {
   const [selectedId, setSelectedId] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
   const [showGrid, setShowGrid] = useState(true);
-  const [zoom, setZoom] = useState(0.8);
+  const [workspaceBox, setWorkspaceBox] = useState({ w: 800, h: 600 });
   const [guides, setGuides] = useState({ x: null, y: null });
   const [saving, setSaving] = useState(false);
+  // Read after mount; the server render has no URL to read it from.
+  const [returnTo, setReturnTo] = useState(null);
+  const [leaving, setLeaving] = useState(false);
+  useEffect(() => { setReturnTo(readReturnTo()); }, []);
   const [statusMessage, setStatusMessage] = useState('');
   const canvasRef = useRef(null);
   const dragState = useRef(null);
@@ -264,14 +279,38 @@ export default function DesignEditorPage({ initialKind } = {}) {
   const fileInputRef = useRef(null);
   const workspaceContainerRef = useRef(null);
 
-  const fitToScreen = (customSize = null) => {
-    const targetSize = customSize || canvasSize;
+  useEffect(() => {
     const container = workspaceContainerRef.current;
-    const containerW = container ? container.clientWidth : 800;
-    const containerH = container ? container.clientHeight : 600;
-    const optimal = calculateFitZoom(targetSize, containerW, containerH, 64);
-    setZoom(optimal);
-  };
+    if (!container) return undefined;
+    const measure = () => setWorkspaceBox({ w: container.clientWidth, h: container.clientHeight });
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
+  // Certificates are always one A4 landscape sheet, fitted to the workspace.
+  // The artwork keeps its own pixel size (so saved positions still match the
+  // certificate service) and is scaled uniformly inside that sheet.
+  const pageLayout = useMemo(() => {
+    const pad = 16;
+    const availW = Math.max(280, workspaceBox.w - pad);
+    const availH = Math.max(200, workspaceBox.h - pad);
+    if (designKind === 'badge') {
+      const zoom = Math.min(availW / canvasSize.w, availH / canvasSize.h);
+      return { sheetW: canvasSize.w * zoom, sheetH: canvasSize.h * zoom, zoom };
+    }
+    const ratio = canvasSize.w >= canvasSize.h ? A4_RATIO : 1 / A4_RATIO;
+    let sheetW = availW;
+    let sheetH = sheetW / ratio;
+    if (sheetH > availH) {
+      sheetH = availH;
+      sheetW = sheetH * ratio;
+    }
+    const zoom = Math.min(sheetW / canvasSize.w, sheetH / canvasSize.h);
+    return { sheetW, sheetH, zoom };
+  }, [workspaceBox, canvasSize.w, canvasSize.h, designKind]);
+  const zoom = pageLayout.zoom;
 
   const organizationCode = session?.organization_code;
   const initialDraftCheckedRef = useRef(false);
@@ -294,10 +333,7 @@ export default function DesignEditorPage({ initialKind } = {}) {
           setBackgroundUrl(draft.backgroundUrl);
           if (draft.templateName) setTemplateName(draft.templateName);
           if (draft.designKind) setDesignKind(draft.designKind);
-          if (draft.canvasSize) {
-            setCanvasSize(draft.canvasSize);
-            setTimeout(() => fitToScreen(draft.canvasSize), 120);
-          }
+          if (draft.canvasSize) setCanvasSize(draft.canvasSize);
           if (Array.isArray(draft.elements)) setElements(draft.elements);
           if (Array.isArray(draft.shapes)) setShapes(draft.shapes);
           if (Array.isArray(draft.images)) setImages(draft.images);
@@ -380,7 +416,13 @@ export default function DesignEditorPage({ initialKind } = {}) {
     if (!url) return resolve(null);
     const resolvedUrl = resolveUploadUrl(url);
     const img = new window.Image();
-    img.crossOrigin = 'anonymous';
+    // Private backgrounds live on this same site and require the session
+    // cookie. crossOrigin "anonymous" omits that cookie, so the picture
+    // 401s and the canvas stays blank. Only external images need it.
+    try {
+      const target = new URL(resolvedUrl, window.location.href);
+      if (target.origin !== window.location.origin) img.crossOrigin = 'anonymous';
+    } catch { /* keep the default same-origin request */ }
     img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
     img.onerror = () => resolve(null);
     img.src = resolvedUrl;
@@ -1105,10 +1147,7 @@ export default function DesignEditorPage({ initialKind } = {}) {
   const applyBackground = async (url) => {
     setBackgroundUrl(url);
     const size = await probeImageSize(url);
-    if (size) {
-      setCanvasSize(size);
-      fitToScreen(size);
-    }
+    if (size) setCanvasSize(size);
   };
 
   const uploadBackground = async (event) => {
@@ -1173,13 +1212,21 @@ export default function DesignEditorPage({ initialKind } = {}) {
   // template can never drift from what a manual save would have produced.
   // _isConflictRetry is internal-only (see the 409 handling below) -- never
   // passed by a caller.
+  // Resolves true once the template is saved, false otherwise.
   const saveTemplate = async (trigger = 'manual', _isConflictRetry = false) => {
     if (!backgroundUrl) {
       if (trigger === 'manual') {
         setStatusMessage('Add a background image URL before saving.');
         setTimeout(() => setStatusMessage(''), 3000);
       }
-      return;
+      return false;
+    }
+    if (activeDesignCode && designStatus === 'pending_review') {
+      if (trigger === 'manual') {
+        setStatusMessage('This template is pending review. Take it back to draft before saving.');
+        setTimeout(() => setStatusMessage(''), 4000);
+      }
+      return false;
     }
     // A manual save makes any already-scheduled autosave for the exact
     // same (about to be stale) content redundant -- cancel it so it can
@@ -1256,15 +1303,14 @@ export default function DesignEditorPage({ initialKind } = {}) {
             // `finally` below only runs once the retry has fully finished
             // -- otherwise it would clear `saving` and the status message
             // while the retry it just kicked off is still in flight.
-            await saveTemplate(trigger, true);
-            return;
+            return await saveTemplate(trigger, true);
           }
         }
       }
       if (!res.ok || json.success === false) {
         throw new Error(json.message || 'Failed to save template');
       }
-      setStatusMessage(trigger === 'autosave' ? 'Autosaved' : isUpdate ? 'Template updated.' : 'Template created.');
+      setStatusMessage(trigger === 'autosave' ? 'Autosaved' : isUpdate ? 'Template updated.' : 'Template saved as draft.');
       const finalCode = isUpdate ? activeDesignCode : json.data.design_code;
       if (!isUpdate) setActiveDesignCode(json.data.design_code);
       setDesignStatus(json.data.status || 'draft');
@@ -1282,12 +1328,54 @@ export default function DesignEditorPage({ initialKind } = {}) {
       // must not immediately re-trigger the autosave effect below.
       skipNextAutosaveRef.current = true;
       loadTemplates();
+      return true;
+    } catch (err) {
+      console.error(err);
+      setStatusMessage(`Error: ${err.message}`);
+      return false;
+    } finally {
+      setSaving(false);
+      setTimeout(() => setStatusMessage(''), trigger === 'autosave' ? 2000 : 4000);
+    }
+  };
+
+  // Back to the page that opened the editor (see returnTo). An autosave
+  // still waiting on its debounce is flushed first so the last edits
+  // aren't lost, and the design's code is passed back so that page can
+  // select it.
+  const goBack = async () => {
+    if (!returnTo) return;
+    setLeaving(true);
+    if (autosaveTimerRef.current && activeDesignCode && designStatus !== 'pending_review') {
+      await saveTemplate('autosave');
+    }
+    const target = new URL(returnTo, window.location.origin);
+    if (activeDesignCode) target.searchParams.set('designCode', activeDesignCode);
+    window.location.assign(`${target.pathname}${target.search}`);
+  };
+
+  // Saves the current content and makes sure the template ends up as a
+  // draft: a new or draft template only needs saving, a published one is
+  // also unpublished so it stops being offered for issuing.
+  const saveAsDraft = async () => {
+    const wasPublished = designStatus === 'published';
+    const codeAtStart = activeDesignCode;
+    const saved = await saveTemplate('manual');
+    if (!saved || !wasPublished || !codeAtStart) return;
+    setPublishing(true);
+    try {
+      const res = await apiFetch(`/designs/${codeAtStart}/unpublish`, { method: 'POST' });
+      const json = await res.json();
+      if (!res.ok || json.success === false) throw new Error(json.message || 'Failed to move the template to draft');
+      setDesignStatus(json.data.status);
+      setStatusMessage('Saved as draft. Publish it again to issue credentials from it.');
+      loadTemplates();
     } catch (err) {
       console.error(err);
       setStatusMessage(`Error: ${err.message}`);
     } finally {
-      setSaving(false);
-      setTimeout(() => setStatusMessage(''), trigger === 'autosave' ? 2000 : 4000);
+      setPublishing(false);
+      setTimeout(() => setStatusMessage(''), 4000);
     }
   };
 
@@ -1303,7 +1391,7 @@ export default function DesignEditorPage({ initialKind } = {}) {
       skipNextAutosaveRef.current = false;
       return undefined;
     }
-    if (!activeDesignCode) return undefined;
+    if (!activeDesignCode || designStatus === 'pending_review') return undefined;
     if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     autosaveTimerRef.current = setTimeout(() => {
       saveTemplate('autosave');
@@ -1312,7 +1400,7 @@ export default function DesignEditorPage({ initialKind } = {}) {
       if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [elements, shapes, images, qrPos, backgroundUrl, templateName, activeDesignCode]);
+  }, [elements, shapes, images, qrPos, backgroundUrl, templateName, activeDesignCode, designStatus]);
 
   // --- Draft/Published + LinkedIn share -----------------------------------
   // A template only becomes eligible to actually issue credentials from once
@@ -1345,6 +1433,27 @@ export default function DesignEditorPage({ initialKind } = {}) {
   // published -- an alternative to the direct Publish button above, for
   // orgs that want a second set of eyes. See
   // controllers/designController.js's submitForReview.
+  const withdrawReview = async () => {
+    if (!activeDesignCode) return;
+    setReviewing(true);
+    setStatusMessage('');
+    try {
+      const res = await apiFetch(`/designs/${activeDesignCode}/withdraw-review`, { method: 'POST', redirectOnUnauthorized: false });
+      const json = await res.json();
+      if (!res.ok || json.success === false) throw new Error(json.message || 'Failed to return the template to draft');
+      setDesignStatus(json.data.status || 'draft');
+      setReviewInfo({ submitted_by: null, rejection_reason: null });
+      setStatusMessage('Template returned to draft. You can edit and save it again.');
+      loadTemplates();
+    } catch (err) {
+      console.error(err);
+      setStatusMessage(`Error: ${err.message}`);
+    } finally {
+      setReviewing(false);
+      setTimeout(() => setStatusMessage(''), 4000);
+    }
+  };
+
   const submitForReview = async () => {
     if (!activeDesignCode) return;
     setReviewing(true);
@@ -2260,7 +2369,7 @@ export default function DesignEditorPage({ initialKind } = {}) {
   };
 
   return (
-    <div className="min-h-screen bg-background flex">
+    <div className="h-screen bg-background flex overflow-hidden">
       {/* No visible page title here (the editable template-name field above
           the canvas isn't semantically a page heading) -- this sr-only h1
           is what the page-has-heading-one rule needs, without changing the
@@ -2368,9 +2477,21 @@ export default function DesignEditorPage({ initialKind } = {}) {
         )}
       </aside>
 
-      <div ref={workspaceContainerRef} className="flex-1 flex flex-col items-center p-8 overflow-auto">
-        <div className="w-full max-w-4xl flex flex-wrap items-center justify-between gap-3 mb-4">
+      <div className="flex-1 flex flex-col items-center p-6 overflow-hidden min-h-0">
+        <div className="w-full flex flex-wrap items-center justify-between gap-3 mb-4">
           <div className="flex items-center gap-3">
+            {returnTo && (
+              <button
+                type="button"
+                onClick={goBack}
+                disabled={leaving}
+                title="Return to the issue credential form"
+                className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50"
+              >
+                {leaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowLeft className="h-4 w-4" />}
+                Back to issuing
+              </button>
+            )}
             <div className="flex items-center gap-1 bg-muted p-1 rounded-xl border border-border">
               <button
                 type="button"
@@ -2404,18 +2525,18 @@ export default function DesignEditorPage({ initialKind } = {}) {
               className="text-lg font-semibold text-foreground bg-transparent border-b border-transparent hover:border-border focus:border-primary outline-none px-1"
             />
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 [&_button]:whitespace-nowrap [&_button]:shrink-0">
             <button onClick={undo} className="p-2 rounded border" title="Undo"><Undo2 className="w-4 h-4" /></button>
             <button onClick={redo} className="p-2 rounded border" title="Redo"><Redo2 className="w-4 h-4" /></button>
             <button onClick={() => setShowGrid(value => !value)} className={`p-2 rounded border ${showGrid ? 'bg-indigo-50' : ''}`} title="Grid"><Grid3X3 className="w-4 h-4" /></button>
-            <button onClick={() => setZoom(value => clampZoom(value - 0.1))} className="p-2 rounded border" title="Zoom out"><ZoomOut className="w-4 h-4" /></button>
-            <span className="text-xs w-10 text-center">{Math.round(zoom * 100)}%</span>
-            <button onClick={() => setZoom(value => clampZoom(value + 0.1))} className="p-2 rounded border" title="Zoom in"><ZoomIn className="w-4 h-4" /></button>
-            <button onClick={() => fitToScreen()} className="px-2 py-1.5 text-xs font-medium rounded border hover:bg-muted" title="Fit canvas to screen">Fit</button>
-            <span className="text-xs text-gray-600 border-l pl-2" title="Matches the background image's real pixel size">{canvasSize.w}×{canvasSize.h}</span>
+            {designKind === 'certificate' && (
+              <span className="text-xs font-semibold tracking-wide px-2 py-1 rounded border" title="The page is always shown as A4">
+                A4
+              </span>
+            )}
             {activeDesignCode && designStatus && (
               <span
-                className={`text-xs font-medium px-2 py-1 rounded-full border-l ${
+                className={`text-xs font-medium px-2 py-1 rounded-full whitespace-nowrap shrink-0 border ${
                   designStatus === 'published' ? 'bg-emerald-50 text-emerald-700'
                     : designStatus === 'archived' ? 'bg-gray-100 text-gray-600'
                     : designStatus === 'pending_review' ? 'bg-blue-50 text-blue-700'
@@ -2434,7 +2555,13 @@ export default function DesignEditorPage({ initialKind } = {}) {
             {designStatus === 'draft' && reviewInfo.rejection_reason && (
               <span className="text-xs text-rose-600" title={reviewInfo.rejection_reason}>Rejected: {reviewInfo.rejection_reason}</span>
             )}
-            {statusMessage && <span className="text-sm text-gray-600">{statusMessage}</span>}
+            {statusMessage && (
+              <span className={`text-xs font-medium px-2 py-1 rounded-full whitespace-nowrap shrink-0 ${
+                statusMessage.startsWith('Error') ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'
+              }`}>
+                {statusMessage}
+              </span>
+            )}
             {activeDesignCode && designStatus === 'draft' && (
               <button
                 onClick={submitForReview}
@@ -2446,7 +2573,18 @@ export default function DesignEditorPage({ initialKind } = {}) {
                 Submit for review
               </button>
             )}
-            {activeDesignCode && designStatus === 'pending_review' && (
+            {activeDesignCode && designStatus === 'pending_review' && session?.username === reviewInfo.submitted_by && (
+              <button
+                onClick={withdrawReview}
+                disabled={reviewing}
+                title="Take this template back to draft so you can edit it"
+                className="flex items-center gap-1 border px-3 py-2 rounded-lg text-sm text-amber-700 border-amber-300 hover:bg-amber-50 disabled:opacity-50"
+              >
+                {reviewing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Undo2 className="w-4 h-4" />}
+                Back to draft
+              </button>
+            )}
+            {activeDesignCode && designStatus === 'pending_review' && session?.username !== reviewInfo.submitted_by && (
               <>
                 <button
                   onClick={approveDesign}
@@ -2536,13 +2674,25 @@ export default function DesignEditorPage({ initialKind } = {}) {
                 </div>
               )}
             </div>
+            {designStatus === 'published' && (
+              <button
+                onClick={saveAsDraft}
+                disabled={saving || publishing}
+                title="Save your changes and take this template off the issue list until you publish it again"
+                className="flex items-center gap-2 border border-indigo-300 text-indigo-700 px-4 py-2 rounded-lg font-medium hover:bg-indigo-50 disabled:opacity-50"
+              >
+                <FileText className="w-4 h-4" />
+                Save as draft
+              </button>
+            )}
             <button
-              onClick={() => saveTemplate('manual')}
+              onClick={() => (designStatus === 'published' || designStatus === 'archived' ? saveTemplate('manual') : saveAsDraft())}
               disabled={saving}
+              title={designStatus === 'published' || designStatus === 'archived' ? undefined : 'Save your work as a draft. Publish it when it is ready for issuing.'}
               className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50"
             >
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-              {activeDesignCode ? 'Save changes' : 'Save template'}
+              {designStatus === 'published' || designStatus === 'archived' ? 'Save changes' : 'Save draft'}
             </button>
           </div>
         </div>
@@ -2559,10 +2709,7 @@ export default function DesignEditorPage({ initialKind } = {}) {
               const resolved = resolveUploadUrl(e.target.value);
               if (resolved !== e.target.value) setBackgroundUrl(resolved);
               const size = await probeImageSize(resolved);
-              if (size) {
-                setCanvasSize(size);
-                fitToScreen(size);
-              }
+              if (size) setCanvasSize(size);
             }}
             placeholder="Upload a managed PNG, JPG, WEBP, SVG or PDF template"
             className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2"
@@ -2610,10 +2757,15 @@ export default function DesignEditorPage({ initialKind } = {}) {
           </div>
         )}
 
+        <div ref={workspaceContainerRef} className="flex-1 min-h-0 w-full flex items-center justify-center">
+        <div
+          className="bg-white shadow-xl border flex items-center justify-center"
+          style={{ width: pageLayout.sheetW, height: pageLayout.sheetH }}
+        >
         <div style={{ width: canvasSize.w * zoom, height: canvasSize.h * zoom }}>
         <div
           ref={canvasRef}
-          className="relative bg-white shadow-xl border select-none"
+          className="relative bg-white select-none"
           style={{
             width: canvasSize.w, height: canvasSize.h,
             transform: `scale(${zoom})`, transformOrigin: 'top left',
@@ -2813,6 +2965,8 @@ export default function DesignEditorPage({ initialKind } = {}) {
               </div>
             );
           })()}
+        </div>
+        </div>
         </div>
         </div>
 
@@ -3021,7 +3175,7 @@ export default function DesignEditorPage({ initialKind } = {}) {
                 className="w-full mt-1 h-9 border border-gray-300 rounded-lg"
               />
               {brandKit && (
-                <div className="flex items-center gap-2 mt-1.5">
+                <div className="flex flex-wrap items-center gap-2 mt-1.5">
                   <span className="text-[11px] text-gray-400">Brand:</span>
                   <button
                     onClick={() => updateSelected({ font_color: brandKit.primary_color })}
@@ -3035,6 +3189,15 @@ export default function DesignEditorPage({ initialKind } = {}) {
                     style={{ backgroundColor: brandKit.secondary_color }}
                     className="w-5 h-5 rounded-full border border-gray-300"
                   />
+                  {(brandKit.extra_colors || []).map((color, index) => (
+                    <button
+                      key={`${color}-${index}`}
+                      onClick={() => updateSelected({ font_color: color })}
+                      title={`Brand color (${color})`}
+                      style={{ backgroundColor: color }}
+                      className="w-5 h-5 rounded-full border border-gray-300"
+                    />
+                  ))}
                 </div>
               )}
             </div>

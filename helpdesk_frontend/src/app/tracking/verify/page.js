@@ -20,6 +20,7 @@ function VerifyOTPContent() {
   const [resendLoading, setResendLoading] = useState(false);
   const [resendSuccess, setResendSuccess] = useState(false);
   const [timeLeft, setTimeLeft] = useState(300); // 5 minutes countdown
+  const [devOtp, setDevOtp] = useState('');
   const router = useRouter();
   const searchParams = useSearchParams();
   const ticketCode = searchParams.get('ticket');
@@ -28,6 +29,12 @@ function VerifyOTPContent() {
   const { language, changeLanguage } = useLocalization();
   const t = helpdeskTranslations[language] || helpdeskTranslations.en;
   
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const stored = sessionStorage.getItem('helpdesk_dev_otp');
+    if (stored) setDevOtp(stored);
+  }, []);
+
   // Countdown timer
   useEffect(() => {
     if (timeLeft > 0) {
@@ -152,6 +159,12 @@ function VerifyOTPContent() {
         throw new Error("Failed to resend OTP");
       }
 
+      const data = await response.json().catch(() => ({}));
+      if (data.dev_otp) {
+        sessionStorage.setItem('helpdesk_dev_otp', data.dev_otp);
+        setDevOtp(data.dev_otp);
+      }
+
       setResendSuccess(true);
       setTimeLeft(300); // Reset countdown
       setOtp(["", "", "", "", "", ""]); // Clear current OTP
@@ -184,7 +197,7 @@ function VerifyOTPContent() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.414-5.414l-.707.707M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
           </div>
-          <h1 className="text-4xl font-bold bg-gradient-to-r from-gray-900 via-emerald-900 to-teal-900 bg-clip-text text-transparent mb-4">
+          <h1 className="text-4xl font-bold text-gray-900 mb-4">
             {t.verify_email}
           </h1>
           <p className="text-gray-600 leading-relaxed">
@@ -193,6 +206,11 @@ function VerifyOTPContent() {
           <p className="text-emerald-600 font-semibold mt-1">
             {email || "your email"}
           </p>
+          {devOtp && (
+            <p className="mt-3 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+              Local development code: <span className="font-mono font-semibold tracking-widest">{devOtp}</span>
+            </p>
+          )}
         </div>
 
         {/* OTP Input Section */}

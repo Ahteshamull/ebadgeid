@@ -45,8 +45,6 @@ export default function ContractManagement() {
   const [inviteForm, setInviteForm] = useState({
     party_name: '',
     party_email: '',
-    party_side: '',
-    party_role: '',
     contract_permissions: {
       view: true,
       write: false,
@@ -62,15 +60,29 @@ export default function ContractManagement() {
   });
 
   useEffect(() => {
-    try {
-      if (typeof window !== 'undefined') {
-        apiFetch('/auth/me').then(async (response) => {
-          if (response.ok) setOrgCode((await response.json()).organization_code);
-        });
-      }
-    } catch (e) {
-      console.error('Error loading session', e);
-    }
+    let active = true;
+    apiFetch('/auth/me', { redirectOnUnauthorized: false })
+      .then(async (response) => {
+        if (!active) return;
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(body.message || 'Your session could not be loaded.');
+        }
+        const data = await response.json();
+        if (!data.organization_code) {
+          setLoading(false);
+          toast.error('This account is not linked to an organization.');
+          return;
+        }
+        setOrgCode(data.organization_code);
+      })
+      .catch((error) => {
+        if (!active) return;
+        console.error('Error loading session', error);
+        setLoading(false);
+        toast.error(error.message || 'Failed to load your session.');
+      });
+    return () => { active = false; };
   }, []);
 
   useEffect(() => {
@@ -100,10 +112,14 @@ export default function ContractManagement() {
       const response = await apiFetch(`${API_BASE_URL}/organization/${orgCode}`);
       const data = await response.json();
       if (response.ok) {
-        setContracts(data.contracts || []);
-        setFilteredContracts(data.contracts || []);
+        const rows = Array.isArray(data.contracts) ? data.contracts : [];
+        setContracts(rows);
+        setFilteredContracts(rows);
+        if (typeof data.total === 'number' && data.total > rows.length) {
+          toast.message(`Showing ${rows.length} of ${data.total} contracts.`);
+        }
       } else {
-        toast.error(data.message || 'Failed to load contracts');
+        toast.error(data.message || data.error || 'Failed to load contracts');
       }
     } catch (error) {
       console.error('Error fetching contracts:', error);
@@ -224,7 +240,7 @@ export default function ContractManagement() {
         fetchContracts();
         resetCreateForm();
       } else {
-        toast.error(data.message || 'Failed to create contract');
+        toast.error(data.message || data.error || 'Failed to create contract');
       }
     } catch (error) {
       console.error('Error creating contract:', error);
@@ -251,7 +267,11 @@ export default function ContractManagement() {
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(inviteForm)
+        body: JSON.stringify({
+          ...inviteForm,
+          party_email: inviteForm.party_email.trim().toLowerCase(),
+          party_name: inviteForm.party_name.trim(),
+        })
       });
       const data = await response.json().catch(() => ({}));
       if (response.ok) {
@@ -260,7 +280,7 @@ export default function ContractManagement() {
         fetchContracts();
         resetInviteForm();
       } else {
-        toast.error(data.message || 'Failed to invite party');
+        toast.error(data.message || data.error || 'Failed to invite party');
       }
     } catch (error) {
       console.error('Error inviting party:', error);
@@ -283,16 +303,19 @@ export default function ContractManagement() {
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(tokenForm)
+        body: JSON.stringify({
+          ...tokenForm,
+          email: tokenForm.email.trim().toLowerCase(),
+        })
       });
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
       if (response.ok) {
         setNewAccessToken({ token: data.access_token, expiresAt: data.expires_at });
         setShowTokenModal(false);
         resetTokenForm();
         toast.success('Access token generated successfully!');
       } else {
-        toast.error(data.message || 'Failed to generate token');
+        toast.error(data.message || data.error || 'Failed to generate token');
       }
     } catch (error) {
       console.error('Error generating token:', error);
@@ -324,8 +347,6 @@ export default function ContractManagement() {
     setInviteForm({
       party_name: '',
       party_email: '',
-      party_side: '',
-      party_role: '',
       contract_permissions: {
         view: true,
         write: false,
@@ -694,28 +715,6 @@ export default function ContractManagement() {
                     className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
                     placeholder="john@example.com"
                   />
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-foreground mb-1">Party Side</label>
-                    <input
-                      type="text"
-                      value={inviteForm.party_side}
-                      onChange={(e) => setInviteForm({ ...inviteForm, party_side: e.target.value })}
-                      className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
-                      placeholder="e.g., Client"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-foreground mb-1">Party Role</label>
-                    <input
-                      type="text"
-                      value={inviteForm.party_role}
-                      onChange={(e) => setInviteForm({ ...inviteForm, party_role: e.target.value })}
-                      className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
-                      placeholder="e.g., Signatory"
-                    />
-                  </div>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-foreground mb-2">Permissions</label>

@@ -10,6 +10,7 @@ import { RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { GoogleTranslateWidget } from "@/components/layout/googleTranslateWidget"
 import { changeLanguage, getCurrentLanguage, LANGUAGE_OPTIONS } from "../../lib/googleTranslate"
+import { CountryFlag } from "@/components/ui/country-flag"
 import { ThemeToggle } from "@/components/layout/theme-toggle"
 import {
   DropdownMenu,
@@ -539,14 +540,9 @@ export function Header({ onMenuClick } = {}) {
                 className="gap-2 h-9 px-3 rounded-full hover:bg-muted transition-colors text-foreground"
               >
                 <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 flex items-center justify-center rounded-full bg-muted">
-                    <Globe className="h-3 w-3 text-muted-foreground" />
-                  </div>
+                  <CountryFlag country={currentLangInfo.country} name={currentLangInfo.name} />
                   <span className="hidden sm:inline text-sm font-medium">
-                    {currentLangInfo.flag} {currentLangInfo.name}
-                  </span>
-                  <span className="sm:hidden text-sm font-medium">
-                    {currentLangInfo.flag}
+                    {currentLangInfo.name}
                   </span>
                 </div>
                 <ChevronDown className="h-3 w-3 text-muted-foreground" />
@@ -573,7 +569,7 @@ export function Header({ onMenuClick } = {}) {
                         : 'hover:bg-muted/60 text-muted-foreground hover:text-foreground'
                     }`}
                   >
-                    <span className="text-base">{language.flag}</span>
+                    <CountryFlag country={language.country} name={language.name} />
                     <span className="flex-1">{language.name}</span>
                     {((selectedLanguage === 'en' && language.code === '') ||
                       (selectedLanguage === language.code)) && (

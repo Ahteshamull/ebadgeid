@@ -1,18 +1,28 @@
 const nodemailer = require("nodemailer");
 
-// Shared by sendEmail.js (OTP) and sendMail.js (generic) — both used to
-// build their own nodemailer transporter from the same GMAIL_USER/GMAIL_PASS
-// pair independently, which was the only real duplication between those two
-// files (their actual sending logic is genuinely different: one is a fixed
-// OTP template, the other is a generic to/subject/text mailer, and both have
-// real, distinct consumers — otpController.js and authController.js — so
-// neither file was safe to just delete). One transporter, reused by both.
-const gmailTransporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_PASS,
-  },
-});
+// Same shape as backend/utils/smtpTransporter.js: if SMTP_HOST is set,
+// connect to that server (Gmail in this project). Auth is required for
+// Gmail; Mailpit (127.0.0.1:1025) works without it.
+const smtpHost = process.env.SMTP_HOST || process.env.EMAIL_HOST;
+const smtpUser = process.env.SMTP_USER || process.env.EMAIL_USER || process.env.GMAIL_USER;
+const smtpPass = process.env.SMTP_PASSWORD || process.env.EMAIL_PASS || process.env.GMAIL_PASS;
+const smtpPort = Number.parseInt(process.env.SMTP_PORT || process.env.EMAIL_PORT || '465', 10);
+const secureFlag = process.env.SMTP_SECURE ?? process.env.EMAIL_SECURE;
+const smtpSecure = secureFlag !== 'false' && smtpPort !== 1025;
 
-module.exports = gmailTransporter;
+const transportConfig = smtpHost
+  ? {
+      host: smtpHost,
+      port: smtpPort,
+      secure: smtpSecure,
+      ...(smtpUser && smtpPass ? { auth: { user: smtpUser, pass: smtpPass } } : {}),
+    }
+  : {
+      service: "gmail",
+      auth: {
+        user: smtpUser,
+        pass: smtpPass,
+      },
+    };
+
+module.exports = nodemailer.createTransport(transportConfig);

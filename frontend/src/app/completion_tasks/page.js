@@ -64,13 +64,18 @@ export default function TaskCompletionPage() {
 
   const fetchCompletions = async () => {
     try {
-      if (!session?.organization_code) return;
+      if (!session?.organization_code) {
+        setCompletions([]);
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
       const response = await apiClient.get(`/completions/org/${session.organization_code}`);
-      setCompletions(response.data);
-      setLoading(false);
+      setCompletions(Array.isArray(response.data) ? response.data : []);
     } catch (error) {
       console.error('Failed to fetch task completions:', error);
-      toast.error('Failed to fetch task completions');
+      toast.error(error.response?.data?.message || error.response?.data?.error || 'Failed to fetch task completions');
+    } finally {
       setLoading(false);
     }
   };
@@ -88,7 +93,7 @@ export default function TaskCompletionPage() {
       fetchCompletions();
     } catch (error) {
       console.error('Failed to approve task:', error);
-      toast.error('Failed to approve task');
+      toast.error(error.response?.data?.message || error.response?.data?.error || 'Failed to approve task');
     } finally {
       setActionLoading(null);
     }
@@ -104,7 +109,7 @@ export default function TaskCompletionPage() {
       setCompletionToReject(null);
     } catch (error) {
       console.error('Failed to reject task:', error);
-      toast.error('Failed to reject task');
+      toast.error(error.response?.data?.message || error.response?.data?.error || 'Failed to reject task');
     } finally {
       setActionLoading(null);
     }

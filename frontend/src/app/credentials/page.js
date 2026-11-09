@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { apiFetch } from '@/lib/api';
 import { useSession } from '@/hooks/use-session';
 import { Button } from '@/components/ui/button';
@@ -17,7 +18,10 @@ import { Badge } from '@/components/ui/badge';
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
@@ -49,7 +53,11 @@ import {
   User,
   Hash,
   Building,
-  MapPin
+  MapPin,
+  Palette,
+  Trash2,
+  Pencil,
+  ChevronDown
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -70,6 +78,10 @@ import {
 // tests/bulk-csv-utils.test.mjs) instead of only through this component.
 import { parseBulkRecipients, BULK_CSV_COLUMNS } from '@/lib/bulk-csv-utils.mjs';
 import CredentialPreview from '@/components/CredentialPreview';
+
+// sessionStorage key for the issue form while the admin is away in the
+// design editor (see openDesignEditor).
+const ISSUE_RESUME_KEY = 'ebadge_issue_resume';
 
 export default function CredentialManagementPage() {
   const { session } = useSession();
@@ -102,6 +114,8 @@ export default function CredentialManagementPage() {
   const [bulkAllowance, setBulkAllowance] = useState(null);
   const [showRevokeDialog, setShowRevokeDialog] = useState(false);
   const [credentialToRevoke, setCredentialToRevoke] = useState(null);
+  const [credentialToDelete, setCredentialToDelete] = useState(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [revokeLoading, setRevokeLoading] = useState(false);
   const [error, setError] = useState('');
@@ -147,6 +161,7 @@ export default function CredentialManagementPage() {
   const [employees, setEmployees] = useState([]);
   const [employeesLoading, setEmployeesLoading] = useState(false);
   const [employeeSearch, setEmployeeSearch] = useState('');
+  const [employeeListOpen, setEmployeeListOpen] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState(null);
 
   // Org-defined field values for the selected design (any text_attribute
@@ -163,6 +178,10 @@ export default function CredentialManagementPage() {
   const [previewLoading, setPreviewLoading] = useState(false);
 
   const organizationCode = session?.organization_code;
+  // Teachers can issue credentials, but the designer and credential
+  // deletion are admin-only (app-shell.js ROUTE_PERMISSIONS and the API's
+  // requireAdmin).
+  const isAdmin = ['admin', 'platform_admin'].includes(session?.role);
 
   const fetchEmployees = async () => {
     try {
@@ -263,24 +282,101 @@ export default function CredentialManagementPage() {
     return () => { unmountedRef.current = true; };
   }, []);
 
+  // Resolves to the loaded list (or null on failure) so callers can pick a
+  // design out of the fresh data instead of waiting for a re-render.
   const fetchDesigns = async () => {
-    if (!organizationCode) return;
+    if (!organizationCode) return null;
     try {
       setDesignsLoading(true);
       const response = await apiFetch(`/designs/organization/${organizationCode}`);
       const result = await response.json();
-      if (result.success && Array.isArray(result.data)) {
-        setDesigns(result.data);
-      } else {
-        setDesigns([]);
-      }
+      const list = result.success && Array.isArray(result.data) ? result.data : [];
+      setDesigns(list);
+      return list;
     } catch (err) {
       console.error('Error fetching designs:', err);
       setError('Failed to fetch certificate designs');
+      return null;
     } finally {
       setDesignsLoading(false);
     }
   };
+
+  const [recentDesignCodes, setRecentDesignCodes] = useState([]);
+
+  // Creating or editing a design from the issue modal opens the full design
+  // editor page. The in-progress form is parked in sessionStorage first,
+  // and the editor's "Back to issuing" button returns to
+  // ?resumeIssue=1&designCode=<code>, which reopens the modal below.
+  const openDesignEditor = (code = null) => {
+    try {
+      sessionStorage.setItem(ISSUE_RESUME_KEY, JSON.stringify({
+        issueKind,
+        isGuestRecipient,
+        guestRecipient,
+        selectedEmployee,
+        achiever_username: singleForm.achiever_username,
+        selectedDesignCode: singleForm.selected_design?.design_code || null,
+        customFields: singleFormCustomFields,
+        editingCode: code,
+        recentDesignCodes,
+      }));
+    } catch {}
+    const params = new URLSearchParams({ kind: issueKind, returnTo: '/credentials?resumeIssue=1' });
+    if (code) params.set('code', code);
+    window.location.assign(`/credentials/design-editor?${params.toString()}`);
+  };
+
+  const resumeHandledRef = useRef(false);
+  useEffect(() => {
+    if (resumeHandledRef.current || !organizationCode || typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('resumeIssue') !== '1') return;
+    resumeHandledRef.current = true;
+    const returnedCode = params.get('designCode');
+    params.delete('resumeIssue');
+    params.delete('designCode');
+    const rest = params.toString();
+    window.history.replaceState(null, '', `${window.location.pathname}${rest ? `?${rest}` : ''}`);
+
+    let saved = null;
+    try {
+      saved = JSON.parse(sessionStorage.getItem(ISSUE_RESUME_KEY) || 'null');
+      sessionStorage.removeItem(ISSUE_RESUME_KEY);
+    } catch {}
+    if (!saved) return;
+
+    const kind = saved.issueKind === 'badge' ? 'badge' : 'certificate';
+    setIssueKind(kind);
+    setIsGuestRecipient(Boolean(saved.isGuestRecipient));
+    if (saved.guestRecipient) setGuestRecipient(saved.guestRecipient);
+    setSelectedEmployee(saved.selectedEmployee || null);
+    setSingleForm({ achiever_username: saved.achiever_username || '', selected_design: null });
+    setSingleFormCustomFields(saved.customFields || {});
+    const recent = Array.isArray(saved.recentDesignCodes) ? saved.recentDesignCodes : [];
+    setRecentDesignCodes(returnedCode && !saved.editingCode
+      ? [returnedCode, ...recent.filter((c) => c !== returnedCode)]
+      : recent);
+    setShowInviteModal(true);
+
+    (async () => {
+      const list = await fetchDesigns();
+      if (!list) return;
+      const usable = (code) => {
+        const design = code && list.find((d) => d.design_code === code);
+        return design && (!design.status || design.status === 'published') && (design.design_kind || 'certificate') === kind
+          ? design
+          : null;
+      };
+      // A design that was just created or edited wins; an edited design
+      // that is no longer published can't be issued from, so nothing is
+      // selected then.
+      const design = usable(returnedCode) || (returnedCode === saved.selectedDesignCode ? null : usable(saved.selectedDesignCode));
+      if (!design) return;
+      if (design.design_code !== saved.selectedDesignCode) setSingleFormCustomFields({});
+      setSingleForm((prev) => ({ ...prev, selected_design: design }));
+    })();
+  }, [organizationCode]);
 
   useEffect(() => {
   }, []);
@@ -391,6 +487,29 @@ export default function CredentialManagementPage() {
   const handleRevokeClick = (credential) => {
     setCredentialToRevoke(credential);
     setShowRevokeDialog(true);
+  };
+
+  const deleteCredential = async (credential_code) => {
+    setDeleteLoading(true);
+    setError('');
+    setSuccess('');
+    try {
+      const response = await apiFetch(`/credentials/${encodeURIComponent(credential_code)}`, { method: 'DELETE' });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.message || body.error || 'Failed to delete credential');
+      }
+      setSuccess(`Credential ${credential_code} has been deleted`);
+      setCredentialToDelete(null);
+      // Deleting the last row on a page would otherwise leave an empty page.
+      const nextPage = credentials.length === 1 && currentPage > 1 ? currentPage - 1 : currentPage;
+      if (nextPage !== currentPage) setCurrentPage(nextPage);
+      else fetchCredentials(currentPage, search, statusFilter);
+    } catch (err) {
+      setError('Failed to delete credential: ' + err.message);
+    } finally {
+      setDeleteLoading(false);
+    }
   };
 
   // Step 1 of 2: renders the real certificate image (exactly what
@@ -843,6 +962,18 @@ export default function CredentialManagementPage() {
           <Ban className="h-3 w-3 mr-1" />
           Revoke
         </Button>
+        {isAdmin && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setCredentialToDelete(credential)}
+            aria-label={`Delete credential ${credential.credential_code}`}
+            className="text-xs px-3 py-1 h-8 border-rose-300 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+          >
+            <Trash2 className="h-3 w-3 mr-1" />
+            Delete
+          </Button>
+        )}
       </div>
     );
   };
@@ -876,6 +1007,14 @@ export default function CredentialManagementPage() {
               <Plus className="h-4 w-4" />
               Issue Credentials
             </Button>
+            {isAdmin && (
+              <Button asChild variant="outline" className="gap-2 border-border text-foreground hover:bg-muted">
+                <Link href="/credentials/design-editor">
+                  <Palette className="h-4 w-4" />
+                  Credential Designer
+                </Link>
+              </Button>
+            )}
             <Button onClick={() => setShowBulkModal(true)} variant="outline" className="gap-2 border-border text-foreground hover:bg-muted">
               <Upload className="h-4 w-4" />
               Bulk Issue
@@ -1246,6 +1385,45 @@ export default function CredentialManagementPage() {
         </AlertDialogContent>
       </AlertDialog>
 
+      <AlertDialog open={Boolean(credentialToDelete)} onOpenChange={(open) => { if (!open && !deleteLoading) setCredentialToDelete(null); }}>
+        <AlertDialogContent className="bg-card border-border text-foreground">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-rose-600">
+              <Trash2 className="h-5 w-5" />
+              Delete Credential
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-muted-foreground">
+              Delete <strong>{credentialToDelete?.credential_code}</strong>
+              {' '}for <strong>{credentialToDelete?.achiever_details?.first_name} {credentialToDelete?.achiever_details?.last_name}</strong>?
+              <br /><br />
+              It will be removed from this list and its public verification link will stop working. This cannot be undone. To keep a record but mark it invalid, revoke it instead.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteLoading} className="border-border text-foreground hover:bg-muted">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => { e.preventDefault(); deleteCredential(credentialToDelete?.credential_code); }}
+              disabled={deleteLoading}
+              className="bg-rose-600 hover:bg-rose-700 text-white"
+            >
+              {deleteLoading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Delete Credential
+                </>
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* Single Credential Modal */}
       <Dialog
         open={showInviteModal}
@@ -1428,17 +1606,37 @@ export default function CredentialManagementPage() {
             ) : (
             <div className="space-y-2">
               <label className="text-sm font-medium text-foreground">Select Achiever</label>
+              {!selectedEmployee && (
               <div className="relative">
-                <input
-                  placeholder="Search by name or username..."
-                  value={employeeSearch}
-                  onChange={(e) => setEmployeeSearch(e.target.value)}
-                  className="w-full border border-border rounded-md p-2 bg-background text-foreground text-sm"
-                />
+                <div className="relative">
+                  <input
+                    placeholder="Click to choose, or type a name or username..."
+                    value={employeeSearch}
+                    onChange={(e) => { setEmployeeSearch(e.target.value); setEmployeeListOpen(true); }}
+                    onFocus={() => setEmployeeListOpen(true)}
+                    onClick={() => setEmployeeListOpen(true)}
+                    onBlur={() => setEmployeeListOpen(false)}
+                    onKeyDown={(e) => { if (e.key === 'Escape') setEmployeeListOpen(false); }}
+                    /* Only true on mount when reopened via "Change", so the
+                       list can close again on blur. */
+                    autoFocus={employeeListOpen}
+                    role="combobox"
+                    aria-controls="achiever-options"
+                    aria-expanded={employeeListOpen}
+                    aria-label="Select achiever"
+                    className="w-full border border-border rounded-md p-2 pr-8 bg-background text-foreground text-sm cursor-pointer"
+                  />
+                  <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                </div>
 
-                {/* Results dropdown */}
-                {(employeesLoading || (employeeSearch && employees.length > 0)) && (
-                  <div className="absolute z-20 left-0 right-0 mt-1 bg-card border border-border rounded-md shadow-sm max-h-56 overflow-auto">
+                {/* Results dropdown. mouseDown is cancelled so picking a row
+                    doesn't blur (and close) the list before the click lands. */}
+                {employeeListOpen && (
+                  <div
+                    id="achiever-options"
+                    onMouseDown={(e) => e.preventDefault()}
+                    className="absolute z-20 left-0 right-0 mt-1 bg-card border border-border rounded-md shadow-sm max-h-56 overflow-auto"
+                  >
                     {employeesLoading ? (
                       <div className="p-3 text-sm text-muted-foreground">Loading employees...</div>
                     ) : (
@@ -1459,6 +1657,7 @@ export default function CredentialManagementPage() {
                               setSingleForm({...singleForm, achiever_username: username});
                               setSelectedEmployee(emp);
                               setEmployeeSearch('');
+                              setEmployeeListOpen(false);
                               setCertificatePreview(null);
                             }}
                             className="w-full text-left p-2 hover:bg-muted/40 flex items-center gap-3"
@@ -1484,9 +1683,18 @@ export default function CredentialManagementPage() {
                     {(!employeesLoading && employees.length === 0) && (
                       <div className="p-3 text-sm text-muted-foreground">No employees found for this organization.</div>
                     )}
+                    {(!employeesLoading && employees.length > 0 && employeeSearch && !employees.some(emp => {
+                      const q = employeeSearch.toLowerCase();
+                      const name = `${emp.first_name || emp.name || ''} ${emp.last_name || ''}`.toLowerCase();
+                      const username = (emp.username || emp.user_name || emp.achiever_username || '').toLowerCase();
+                      return name.includes(q) || username.includes(q);
+                    })) && (
+                      <div className="p-3 text-sm text-muted-foreground">No one matches &ldquo;{employeeSearch}&rdquo;.</div>
+                    )}
                   </div>
                 )}
               </div>
+              )}
 
               {/* Selected employee preview */}
               {selectedEmployee && (
@@ -1506,7 +1714,7 @@ export default function CredentialManagementPage() {
                     </div>
                     <div className="text-xs text-muted-foreground truncate">@{selectedEmployee.username || selectedEmployee.user_name}</div>
                   </div>
-                  <Button variant="outline" size="sm" onClick={() => { setSelectedEmployee(null); setSingleForm({...singleForm, achiever_username: ''}); setCertificatePreview(null); }} className="ml-auto border-border text-foreground hover:bg-muted">Change</Button>
+                  <Button variant="outline" size="sm" onClick={() => { setSelectedEmployee(null); setSingleForm({...singleForm, achiever_username: ''}); setCertificatePreview(null); setEmployeeListOpen(true); }} className="ml-auto border-border text-foreground hover:bg-muted">Change</Button>
                 </div>
               )}
             </div>
@@ -1543,6 +1751,9 @@ export default function CredentialManagementPage() {
                     setShowInviteModal(false);
                     window.location.href = issueKind === 'badge' ? '/credentials/design-editor?kind=badge' : '/credentials/design-editor?kind=certificate';
                   }}
+                  onCreateDesign={isAdmin ? () => openDesignEditor(null) : undefined}
+                  onEditDesign={isAdmin ? (code) => openDesignEditor(code) : undefined}
+                  recentCodes={recentDesignCodes}
                 />
               </div>
             )}
@@ -1959,23 +2170,80 @@ export default function CredentialManagementPage() {
           </Button>
         </DialogContent>
       </Dialog>
+
     </div>
   );
 }
 
+const newestFirst = (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+
+function DesignOption({ design, isNew, statusLabel }) {
+  const isValidUrl = design.main_template_url && /^(https?:\/\/|data:|\/)/i.test(design.main_template_url.trim());
+  const title = design.credential_title || design.design_name || design.design_code;
+  return (
+    <div className="flex items-center gap-2.5">
+      {isValidUrl ? (
+        <img
+          src={design.main_template_url}
+          alt={design.design_code}
+          className="w-8 h-6 rounded object-cover border border-border shrink-0"
+          onError={(e) => { e.currentTarget.style.display = 'none'; }}
+        />
+      ) : (
+        <div className="w-8 h-6 rounded bg-muted flex items-center justify-center border border-border shrink-0">
+          <Award className="h-3.5 w-3.5 text-primary" />
+        </div>
+      )}
+      <div className="flex flex-col text-left min-w-0">
+        <span className="font-medium text-xs text-foreground truncate">
+          {title}
+          {isNew && (
+            <span className="ml-1.5 rounded bg-emerald-100 px-1 py-px text-[9px] font-semibold uppercase text-emerald-700">New</span>
+          )}
+        </span>
+        <span className="text-[10px] text-muted-foreground truncate">
+          {design.design_code} • {statusLabel}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// onCreateDesign/onEditDesign are optional: when given (single-issue modal,
+// admins only) designs can be created and edited without leaving the page;
+// otherwise the empty state falls back to onOpenEditor (full editor page).
 function DesignPicker({
   designs = [],
   loading = false,
   kind = 'certificate',
   selectedCode = '',
   onSelectDesign,
-  onOpenEditor
+  onOpenEditor,
+  onCreateDesign,
+  onEditDesign,
+  recentCodes = []
 }) {
-  const publishedDesigns = designs.filter(
-    (d) => (d.design_kind || 'certificate') === kind && (!d.status || d.status === 'published')
-  );
-  const draftDesigns = designs.filter(
-    (d) => (d.design_kind || 'certificate') === kind && d.status && d.status !== 'published'
+  const ofKind = designs.filter((d) => (d.design_kind || 'certificate') === kind && d.status !== 'archived');
+  const publishedDesigns = ofKind.filter((d) => !d.status || d.status === 'published').sort(newestFirst);
+  const draftDesigns = ofKind.filter((d) => d.status && d.status !== 'published').sort(newestFirst);
+  const recentSet = new Set(recentCodes);
+  const recentDrafts = draftDesigns.filter((d) => recentSet.has(d.design_code));
+  const kindLabel = kind === 'badge' ? 'Badge' : 'Certificate';
+
+  const recentDraftNotice = onEditDesign && recentDrafts.length > 0 && (
+    <div className="space-y-1.5">
+      {recentDrafts.map((d) => (
+        <div key={d.design_code} className="flex items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <span className="min-w-0">
+            <strong className="font-semibold">{d.credential_title || d.design_code}</strong> is saved as a draft. Publish it in the editor to issue from it.
+          </span>
+          <Button type="button" size="sm" variant="outline" onClick={() => onEditDesign(d.design_code)} className="h-7 shrink-0 border-amber-300 bg-white text-xs text-amber-800 hover:bg-amber-100">
+            <Pencil className="mr-1 h-3 w-3" />
+            Open
+          </Button>
+        </div>
+      ))}
+    </div>
   );
 
   if (loading) {
@@ -2013,61 +2281,83 @@ function DesignPicker({
           <Button
             type="button"
             size="sm"
-            onClick={onOpenEditor}
+            onClick={onCreateDesign || onOpenEditor}
             className="text-xs gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90"
           >
             <Plus className="h-3.5 w-3.5" />
-            {draftDesigns.length > 0
+            {draftDesigns.length > 0 && !onCreateDesign
               ? `Open Editor & Publish Design`
-              : `Create ${kind === 'badge' ? 'Badge' : 'Certificate'} Design`
+              : `Create ${kindLabel} Design`
             }
           </Button>
         </div>
+        {recentDraftNotice}
       </div>
     );
   }
 
   return (
-    <Select
-      value={selectedCode}
-      onValueChange={(val) => {
-        const found = designs.find(d => d.design_code === val);
-        onSelectDesign(found || null);
-      }}
-    >
-      <SelectTrigger className="bg-background border-border text-foreground">
-        <SelectValue placeholder={`Choose a published ${kind} design`} />
-      </SelectTrigger>
-      <SelectContent className="bg-card border-border text-foreground max-h-60 overflow-y-auto">
-        {publishedDesigns.map((design) => {
-          const isValidUrl = design.main_template_url && /^(https?:\/\/|data:|\/)/i.test(design.main_template_url.trim());
-          const title = design.credential_title || design.design_name || design.design_code;
-          return (
+    <div className="space-y-2">
+      <Select
+        value={selectedCode}
+        onValueChange={(val) => {
+          const found = designs.find(d => d.design_code === val);
+          onSelectDesign(found || null);
+        }}
+      >
+        <SelectTrigger className="bg-background border-border text-foreground">
+          <SelectValue placeholder={`Choose a published ${kind} design`} />
+        </SelectTrigger>
+        <SelectContent className="bg-card border-border text-foreground max-h-60 overflow-y-auto">
+          {publishedDesigns.map((design) => (
             <SelectItem key={design.design_code} value={design.design_code}>
-              <div className="flex items-center gap-2.5">
-                {isValidUrl ? (
-                  <img
-                    src={design.main_template_url}
-                    alt={design.design_code}
-                    className="w-8 h-6 rounded object-cover border border-border shrink-0"
-                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                  />
-                ) : (
-                  <div className="w-8 h-6 rounded bg-muted flex items-center justify-center border border-border shrink-0">
-                    <Award className="h-3.5 w-3.5 text-primary" />
-                  </div>
-                )}
-                <div className="flex flex-col text-left min-w-0">
-                  <span className="font-medium text-xs text-foreground truncate">{title}</span>
-                  <span className="text-[10px] text-muted-foreground truncate">
-                    {design.design_code} • Published
-                  </span>
-                </div>
-              </div>
+              <DesignOption design={design} isNew={recentSet.has(design.design_code)} statusLabel="Published" />
             </SelectItem>
-          );
-        })}
-      </SelectContent>
-    </Select>
+          ))}
+          {draftDesigns.length > 0 && (
+            <SelectGroup>
+              <SelectSeparator />
+              <SelectLabel className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Drafts (publish to issue)
+              </SelectLabel>
+              {draftDesigns.map((design) => (
+                <SelectItem key={design.design_code} value={design.design_code} disabled>
+                  <DesignOption
+                    design={design}
+                    isNew={recentSet.has(design.design_code)}
+                    statusLabel={design.status === 'pending_review' ? 'Pending review' : 'Draft'}
+                  />
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          )}
+        </SelectContent>
+      </Select>
+      {(onCreateDesign || onEditDesign) && (
+        <div className="flex flex-wrap items-center gap-2">
+          {onCreateDesign && (
+            <Button type="button" size="sm" variant="outline" onClick={onCreateDesign} className="h-8 gap-1.5 text-xs border-border">
+              <Plus className="h-3.5 w-3.5" />
+              New {kindLabel.toLowerCase()} design
+            </Button>
+          )}
+          {onEditDesign && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => onEditDesign(selectedCode)}
+              disabled={!selectedCode}
+              title={selectedCode ? 'Move and edit elements of the selected design' : 'Choose a design first'}
+              className="h-8 gap-1.5 text-xs border-border"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              Edit selected design
+            </Button>
+          )}
+        </div>
+      )}
+      {recentDraftNotice}
+    </div>
   );
 }

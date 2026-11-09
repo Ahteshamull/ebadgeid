@@ -72,7 +72,7 @@ import {
   FileText,
   FileSpreadsheet
 } from "lucide-react";
-import { generateUserExcelWorkbook } from "@/lib/user-export-utils.mjs";
+import { USER_EXPORT_COLUMNS, formatUserDataForExport, generateUserExcelWorkbook } from "@/lib/user-export-utils.mjs";
 
 export default function UserManagementPage() {
   const { session } = useSession();
@@ -116,12 +116,18 @@ export default function UserManagementPage() {
     fetchUsers();
   }, [organizationCode]);
 
+  const isActiveStatus = (status) => String(status || "").toLowerCase() === "active";
+  const isInactiveStatus = (status) => String(status || "").toLowerCase() === "inactive";
+
   const filteredUsers = users.filter((user) => {
     const matchesSearch = `${user.first_name} ${user.last_name} ${user.username}`
       .toLowerCase()
       .includes(search.toLowerCase());
     
-    const matchesStatus = statusFilter === "all" || user.status === statusFilter;
+    const matchesStatus = statusFilter === "all"
+      || (statusFilter === "Active" && isActiveStatus(user.status))
+      || (statusFilter === "Inactive" && isInactiveStatus(user.status))
+      || user.status === statusFilter;
     
     return matchesSearch && matchesStatus;
   });
@@ -143,7 +149,7 @@ export default function UserManagementPage() {
   const toggleStatus = async (username) => {
     const target = users.find(user => user.username === username);
     if (!target?._id) return;
-    const status = target.status === 'Active' ? 'Inactive' : 'Active';
+    const status = isActiveStatus(target.status) ? 'Inactive' : 'Active';
     const response = await apiFetch(`/users/${target._id}`, {
       method: 'PUT',
       body: JSON.stringify({ status }),
@@ -385,31 +391,13 @@ export default function UserManagementPage() {
     ]);
     const doc = new jsPDF();
     doc.text("User List", 14, 10);
-    const tableColumn = [
-      "Username",
-      "Name",
-      "Designation",
-      "Organization",
-      "Location",
-      "Email",
-      "Phone",
-      "Status"
-    ];
-
-    const tableRows = filteredUsers.map(user => [
-      user.username,
-      `${user.first_name} ${user.last_name}`,
-      user.designation,
-      user.organization_code,
-      `${user.city}, ${user.state}, ${user.country}`,
-      user.email,
-      user.phone,
-      user.status
-    ]);
+    const tableRows = formatUserDataForExport(filteredUsers).map(row =>
+      USER_EXPORT_COLUMNS.map(column => row[column])
+    );
 
     autoTable(doc, {
       startY: 20,
-      head: [tableColumn],
+      head: [USER_EXPORT_COLUMNS],
       body: tableRows,
       styles: { fontSize: 8 },
       headStyles: { fillColor: [22, 163, 74] },
@@ -505,7 +493,7 @@ export default function UserManagementPage() {
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Active</p>
                   <p className="text-2xl font-bold text-foreground">
-                    {users.filter(u => u.status === "Active").length}
+                    {users.filter(u => isActiveStatus(u.status)).length}
                   </p>
                 </div>
                 <div className="p-2 bg-emerald-500/10 text-emerald-500 rounded-lg">
@@ -520,7 +508,7 @@ export default function UserManagementPage() {
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Inactive</p>
                   <p className="text-2xl font-bold text-foreground">
-                    {users.filter(u => u.status === "Inactive").length}
+                    {users.filter(u => isInactiveStatus(u.status)).length}
                   </p>
                 </div>
                 <div className="p-2 bg-rose-500/10 text-rose-500 rounded-lg">
@@ -670,19 +658,19 @@ export default function UserManagementPage() {
                       </TableCell>
                       <TableCell>
                         <Badge 
-                          variant={user.status === "Active" ? "default" : "secondary"}
+                          variant={isActiveStatus(user.status) ? "default" : "secondary"}
                           className={
-                            user.status === "Active" 
+                            isActiveStatus(user.status)
                               ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20" 
                               : "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20"
                           }
                         >
-                          {user.status === "Active" ? (
+                          {isActiveStatus(user.status) ? (
                             <CheckCircle2 className="h-3 w-3 mr-1" />
                           ) : (
                             <XCircle className="h-3 w-3 mr-1" />
                           )}
-                          {user.status}
+                          {isActiveStatus(user.status) ? "Active" : isInactiveStatus(user.status) ? "Inactive" : user.status}
                         </Badge>
                       </TableCell>
                       <TableCell>
@@ -696,7 +684,7 @@ export default function UserManagementPage() {
                             <DropdownMenuContent align="end" className="w-48 bg-card border-border text-foreground">
                               <DropdownMenuItem onClick={() => toggleStatus(user.username)}>
                                 <UserX className="mr-2 h-4 w-4" />
-                                {user.status === "Active" ? "Disable User" : "Enable User"}
+                                {isActiveStatus(user.status) ? "Disable User" : "Enable User"}
                               </DropdownMenuItem>
                               <DropdownMenuSeparator className="bg-border" />
                               <DropdownMenuItem

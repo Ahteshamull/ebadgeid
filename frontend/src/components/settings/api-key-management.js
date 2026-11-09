@@ -72,13 +72,17 @@ export default function ApiKeyManagement() {
 
   const fetchApiKeys = async () => {
     try {
-      if (!session?.organization_code) return;
+      if (!session?.organization_code) {
+        setApiKeys([]);
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       const response = await apiClient.get(`/keys/organization/${session.organization_code}`);
-      setApiKeys(response.data || []);
+      setApiKeys(Array.isArray(response.data) ? response.data : []);
     } catch (error) {
       console.error('Failed to fetch API keys:', error);
-      toast.error('Failed to fetch API keys');
+      toast.error(error.response?.data?.message || error.response?.data?.error || 'Failed to fetch API keys');
     } finally {
       setLoading(false);
     }
@@ -107,7 +111,7 @@ export default function ApiKeyManagement() {
       toast.success('API Key generated successfully.');
     } catch (error) {
       console.error('Failed to generate API key:', error);
-      toast.error('Failed to generate API key');
+      toast.error(error.response?.data?.message || error.response?.data?.error || 'Failed to generate API key');
     } finally {
       setSubmitting(false);
     }
@@ -123,7 +127,7 @@ export default function ApiKeyManagement() {
       toast.success('API Key revoked successfully');
     } catch (error) {
       console.error('Failed to revoke API key:', error);
-      toast.error('Failed to revoke API key');
+      toast.error(error.response?.data?.message || error.response?.data?.error || 'Failed to revoke API key');
     } finally {
       setRevoking(false);
     }
@@ -341,7 +345,10 @@ export default function ApiKeyManagement() {
                   {apiKeys.map((key) => (
                     <TableRow key={key._id} className="hover:bg-muted/40 border-b border-border">
                       <TableCell className="font-mono text-xs text-foreground font-medium">
-                        {key.api_key_masked || key.api_key?.slice(0, 10) + '••••••••' || key._id}
+                        {key.api_key_masked
+                          || (key.key_prefix ? `${key.key_prefix}••••${key.last_four || ''}` : null)
+                          || (key.api_key ? `${key.api_key.slice(0, 8)}••••••••` : null)
+                          || key._id}
                       </TableCell>
                       <TableCell>{getStatusBadge(key)}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">

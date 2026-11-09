@@ -21,13 +21,11 @@ const ROUTE_PERMISSIONS = [
   { prefix: '/api_tokens', roles: ['admin', 'platform_admin'] },
   { prefix: '/completion_tasks', roles: ['admin', 'platform_admin'] },
   { prefix: '/manage_contracts', roles: ['admin', 'platform_admin'] },
-  { prefix: '/platform', roles: ['admin', 'platform_admin'] },
+  { prefix: '/platform', roles: ['platform_admin'] },
   { prefix: '/reports', roles: ['admin', 'teacher', 'platform_admin'] },
   { prefix: '/users', roles: ['admin', 'teacher', 'platform_admin'] },
   { prefix: '/credentials', roles: ['admin', 'teacher', 'platform_admin'] },
-  { prefix: '/goals', roles: ['admin', 'teacher'] },
   { prefix: '/user_dash', roles: ['user'] },
-  { prefix: '/my_goals', roles: ['user'] },
   { prefix: '/creds', roles: ['user'] },
   { prefix: '/settings', roles: ['admin', 'teacher', 'user', 'platform_admin'] },
 ];
@@ -52,6 +50,11 @@ export function AppShell({ children }) {
 
     if (!loading && !session) {
       router.replace('/auth/login');
+      return;
+    }
+
+    if (session?.role && (pathname?.startsWith('/goals') || pathname?.startsWith('/my_goals'))) {
+      router.replace(session.role === 'user' ? '/user_dash' : '/reports/organizations');
       return;
     }
 

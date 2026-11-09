@@ -9,7 +9,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Upload, User, Building2, MapPin, Phone, Lock, Eye, EyeOff, ArrowRight, ArrowLeft, CheckCircle, Loader2, AlertCircle } from 'lucide-react';
 import { useRouter, useParams } from 'next/navigation';
 import { toast } from 'sonner';
-import { API_BASE_URL } from '@/lib/api';
+import { API_BASE_URL, ensureCsrfToken } from '@/lib/api';
 
 export default function StepOnboarding() {
   const router = useRouter();
@@ -79,10 +79,16 @@ export default function StepOnboarding() {
 
     const verifyInvitation = async () => {
       try {
+        // A browser that is (or was) signed in to the app still carries the
+        // session cookie, and the API then rejects any POST without a
+        // matching CSRF token -- even on these public invitation routes.
+        const csrfToken = await ensureCsrfToken();
         const response = await fetch(`${API_BASE_URL}/invitation/verify/${inviteCode}`, {
           method: 'POST',
+          credentials: 'include',
           headers: {
             'Content-Type': 'application/json',
+            'X-CSRF-Token': csrfToken,
             'x-invite-code': inviteCode
           }
         });
@@ -141,8 +147,11 @@ export default function StepOnboarding() {
       const formData = new FormData();
       formData.append('file', file);
 
+      const csrfToken = await ensureCsrfToken();
       const response = await fetch(`${API_BASE_URL}/invitation/profile-upload/${encodeURIComponent(inviteCode)}`, {
         method: 'POST',
+        credentials: 'include',
+        headers: { 'X-CSRF-Token': csrfToken },
         body: formData
       });
 
@@ -179,10 +188,13 @@ export default function StepOnboarding() {
 
   const registerUser = async (userData) => {
     try {
+      const csrfToken = await ensureCsrfToken();
       const response = await fetch(`${API_BASE_URL}/users/self-signup`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
+          'X-CSRF-Token': csrfToken,
           'x-invite-code': inviteCode
         },
         body: JSON.stringify({

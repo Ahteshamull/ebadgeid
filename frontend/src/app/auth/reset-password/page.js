@@ -19,8 +19,12 @@ export default function ResetPasswordPage() {
   const [error, setError] = useState("")
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.hash.replace(/^#/, ""))
-    setCredentials({ username: params.get("username") || "", token: params.get("token") || "" })
+    const query = new URLSearchParams(window.location.search)
+    const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""))
+    const username = query.get("username") || hash.get("username") || ""
+    const token = query.get("token") || hash.get("token") || ""
+    if (!token) return
+    setCredentials({ username, token })
     window.history.replaceState({}, "", window.location.pathname)
   }, [])
 

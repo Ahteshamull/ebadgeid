@@ -2,6 +2,13 @@
  * Utility functions for user management report export (Excel & PDF data preparation).
  */
 
+export function formatUserStatus(status) {
+  const value = String(status || '').trim().toLowerCase();
+  if (value === 'active') return 'Active';
+  if (value === 'inactive') return 'Inactive';
+  return String(status || '').trim();
+}
+
 export const USER_EXPORT_COLUMNS = [
   "Username",
   "Name",
@@ -41,7 +48,7 @@ export function formatUserDataForExport(users = []) {
       "Location": location,
       "Email": user?.email || '',
       "Phone": user?.phone || '',
-      "Status": user?.status || ''
+      "Status": formatUserStatus(user?.status)
     };
   });
 }

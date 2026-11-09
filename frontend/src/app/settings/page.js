@@ -35,7 +35,9 @@ import {
   Image as ImagePlaceholderIcon,
   Palette,
   Key,
-  GraduationCap
+  GraduationCap,
+  Plus,
+  X
 } from 'lucide-react';
 import ApiKeyManagement from '@/components/settings/api-key-management';
 import LmsIntegrationManagement from '@/components/settings/lms-integration';
@@ -80,7 +82,7 @@ const initialUploadingState = {
 };
 
 export default function SettingsPage() {
-  const { session } = useSession();
+  const { session, loading: sessionLoading, error: sessionError } = useSession();
   // State management
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -127,10 +129,15 @@ export default function SettingsPage() {
 
   // Session identity comes from the server-validated httpOnly cookie.
   useEffect(() => {
-    if (!session) return;
+    if (sessionLoading) return;
+    if (!session?.username) {
+      setLoading(false);
+      setError(sessionError?.message || 'Sign in to view settings.');
+      return;
+    }
     setCurrentUsername(session.username || '');
     setUserRole(session.role || 'user');
-  }, [session]);
+  }, [session, sessionLoading, sessionError]);
 
   // Fetch data when username changes
   useEffect(() => {
@@ -265,7 +272,10 @@ export default function SettingsPage() {
       body: JSON.stringify(updatedData)
     });
     
-    if (!response.ok) throw new Error('Failed to update user');
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.message || body.error || 'Failed to update user');
+    }
     return response.json();
   };
 
@@ -278,7 +288,10 @@ export default function SettingsPage() {
       body: JSON.stringify(updatedData)
     });
     
-    if (!response.ok) throw new Error('Failed to update organization');
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.message || body.error || 'Failed to update organization');
+    }
     return response.json();
   };
 
@@ -303,6 +316,7 @@ export default function SettingsPage() {
       };
 
       await updateUser(userUpdateData);
+      await fetchUserData();
 
       // Update organization data if admin
       if (isAdmin) {
@@ -318,6 +332,7 @@ export default function SettingsPage() {
         };
 
         await updateOrganization(orgUpdateData);
+        await fetchOrganizationData();
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('organization-updated', { detail: orgUpdateData }));
         }
@@ -609,10 +624,11 @@ const ProfileSettings = ({ userData, uploading, handleUserChange, handleFileUplo
                 name="email"
                 type="email"
                 value={userData.email}
-                onChange={handleUserChange}
-                className="bg-background border-input text-foreground"
+                readOnly
+                className="bg-muted border-input text-foreground"
                 placeholder="your.email@example.com"
               />
+              <p className="text-xs text-muted-foreground">Email is the account identity and is not changed from this form.</p>
             </div>
             
             <div className="space-y-2">
@@ -1001,8 +1017,39 @@ const OrganizationSettings = ({ organizationData, uploading, handleOrganizationC
 // userData/organizationData state, because it lives behind its own
 // endpoint (/api/brand-kit, see controllers/brandKitController.js) with no
 // overlap with either of those.
+// Matches MAX_EXTRA_COLORS in backend/controllers/brandKitController.js.
+const MAX_EXTRA_BRAND_COLORS = 10;
+// Offered in order when "+" adds a color, so a new swatch is visibly
+// different from the ones already there.
+const SUGGESTED_BRAND_COLORS = ['#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#64748b', '#84cc16'];
+
 const BrandKitSettings = () => {
-  const [brandKit, setBrandKit] = useState({ primary_color: '#4f46e5', secondary_color: '#1f2937', logo_url: '' });
+  const [brandKit, setBrandKit] = useState({ primary_color: '#4f46e5', secondary_color: '#1f2937', extra_colors: [], logo_url: '' });
+  const extraColors = brandKit.extra_colors || [];
+
+  const addExtraColor = () => {
+    setBrandKit((prev) => {
+      const current = prev.extra_colors || [];
+      if (current.length >= MAX_EXTRA_BRAND_COLORS) return prev;
+      const used = new Set([prev.primary_color, prev.secondary_color, ...current].map((c) => String(c).toLowerCase()));
+      const next = SUGGESTED_BRAND_COLORS.find((c) => !used.has(c)) || '#000000';
+      return { ...prev, extra_colors: [...current, next] };
+    });
+  };
+
+  const updateExtraColor = (index, value) => {
+    setBrandKit((prev) => ({
+      ...prev,
+      extra_colors: (prev.extra_colors || []).map((c, i) => (i === index ? value : c)),
+    }));
+  };
+
+  const removeExtraColor = (index) => {
+    setBrandKit((prev) => ({
+      ...prev,
+      extra_colors: (prev.extra_colors || []).filter((_, i) => i !== index),
+    }));
+  };
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
@@ -1014,7 +1061,7 @@ const BrandKitSettings = () => {
       try {
         const res = await apiFetch('/brand-kit');
         const json = await res.json();
-        if (res.ok && json.success) setBrandKit(json.data);
+        if (res.ok && json.success) setBrandKit({ ...json.data, extra_colors: json.data.extra_colors || [] });
       } catch (err) {
         console.error('Failed to load brand kit:', err);
       } finally {
@@ -1058,12 +1105,13 @@ const BrandKitSettings = () => {
         body: JSON.stringify({
           primary_color: brandKit.primary_color,
           secondary_color: brandKit.secondary_color,
+          extra_colors: extraColors,
           logo_url: brandKit.logo_url,
         }),
       });
       const json = await res.json();
       if (!res.ok || json.success === false) throw new Error(json.message || 'Failed to save brand kit');
-      setBrandKit(json.data);
+      setBrandKit({ ...json.data, extra_colors: json.data.extra_colors || [] });
       setSuccess(true);
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('brandkit-updated', { detail: json.data }));
@@ -1146,6 +1194,57 @@ const BrandKitSettings = () => {
               />
             </div>
           </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <Label className="text-foreground">More colors</Label>
+            <span className="text-xs text-muted-foreground">{extraColors.length}/{MAX_EXTRA_BRAND_COLORS}</span>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            {extraColors.map((color, index) => (
+              <div key={index} className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={/^#[0-9a-f]{6}$/i.test(color) ? color : '#000000'}
+                  onChange={(e) => updateExtraColor(index, e.target.value)}
+                  aria-label={`Brand color ${index + 3}`}
+                  className="h-10 w-14 border border-input rounded cursor-pointer bg-background"
+                />
+                <Input
+                  value={color}
+                  onChange={(e) => updateExtraColor(index, e.target.value)}
+                  aria-label={`Brand color ${index + 3} hex value`}
+                  className="bg-background border-input text-foreground font-mono"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => removeExtraColor(index)}
+                  aria-label={`Remove brand color ${color}`}
+                  className="h-9 w-9 shrink-0 text-muted-foreground hover:text-red-600 hover:bg-red-50"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            ))}
+            {extraColors.length < MAX_EXTRA_BRAND_COLORS && (
+              <button
+                type="button"
+                onClick={addExtraColor}
+                aria-label="Add another brand color"
+                title="Add another brand color"
+                className="flex h-10 items-center justify-center gap-2 rounded-md border-2 border-dashed border-border text-sm font-medium text-muted-foreground transition-colors hover:border-primary hover:text-primary"
+              >
+                <Plus className="h-4 w-4" />
+                Add color
+              </button>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Extra colors show up as quick picks next to your primary and secondary colors in the credential designer.
+          </p>
         </div>
 
         <div className="space-y-2">

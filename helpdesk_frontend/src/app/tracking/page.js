@@ -99,6 +99,8 @@ const t = helpdeskTranslations[language] || helpdeskTranslations.en;
         body: JSON.stringify({ emailOrUsername: email, organization_code: ORGANIZATION_CODE }),
       });
       if (!response.ok) throw new Error('Failed to send OTP');
+      const data = await response.json().catch(() => ({}));
+      if (data.dev_otp) sessionStorage.setItem('helpdesk_dev_otp', data.dev_otp);
       router.push(`/tracking/verify?email=${encodeURIComponent(email)}`);
     } catch (err) {
       setError(err.message);
@@ -127,6 +129,7 @@ const t = helpdeskTranslations[language] || helpdeskTranslations.en;
       }
 
       const data = await response.json();
+      if (data.dev_otp) sessionStorage.setItem('helpdesk_dev_otp', data.dev_otp);
       setOtpSuccess(true);
       
       // Add a small delay to show the success message

@@ -74,7 +74,10 @@ export default function PaymentApprovalsPage() {
       setIsLoading(true);
       setError(null);
       const response = await apiFetch('/organizations/self-signup/pending');
-      if (!response.ok) throw new Error(`Error fetching pending signups: ${response.status}`);
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.message || `Error fetching pending signups: ${response.status}`);
+      }
       const result = await response.json();
       setPending(result.pending || []);
     } catch (err) {
@@ -87,8 +90,13 @@ export default function PaymentApprovalsPage() {
 
   useEffect(() => {
     if (sessionLoading) return;
+    if (session?.role !== 'platform_admin') {
+      setPending([]);
+      setIsLoading(false);
+      return;
+    }
     fetchPending();
-  }, [sessionLoading, fetchPending]);
+  }, [sessionLoading, session?.role, fetchPending]);
 
   const openApprove = (item) => {
     setApproveTarget(item);

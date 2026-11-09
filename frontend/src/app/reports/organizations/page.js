@@ -13,7 +13,9 @@ import {
   Pie,
   Cell,
   Area,
-  AreaChart
+  AreaChart,
+  BarChart,
+  Bar
 } from 'recharts';
 import {
   Users,
@@ -42,8 +44,9 @@ function toMonthlyChartData(trend = []) {
     .map(({ date, count }) => {
       const parts = (date || '').split('-');
       const monthIdx = parseInt(parts[1], 10) - 1;
+      const monthName = MONTH_LABELS[monthIdx];
       return {
-        month: MONTH_LABELS[monthIdx] || date,
+        month: monthName ? `${monthName} ${parts[0] || ''}`.trim() : date,
         count: typeof count === 'number' ? count : 0,
       };
     });
@@ -168,12 +171,18 @@ export default function OrganizationReportPage() {
     );
   }
 
-  const credentialStatusData = [
-    { name: 'Active', value: data?.active_credentials || 0, color: '#10b981' },
-    { name: 'Revoked', value: data?.revoked_credentials || 0, color: '#f43f5e' },
-  ];
-  const hasCredentialStatus = (data?.active_credentials || 0) + (data?.revoked_credentials || 0) > 0;
+  const STATUS_COLORS = { Issued: '#3b82f6', Claimed: '#10b981', Expired: '#f59e0b', Revoked: '#f43f5e' };
+  const credentialStatusData = (Array.isArray(data?.credential_status_breakdown) ? data.credential_status_breakdown : [])
+    .map((item) => ({
+      name: item.name,
+      value: typeof item.value === 'number' ? item.value : 0,
+      color: STATUS_COLORS[item.name] || '#94a3b8',
+    }))
+    .filter((item) => item.value > 0);
+  const hasCredentialStatus = credentialStatusData.length > 0;
   const trendChartData = toMonthlyChartData(data?.credential_issuance_trend);
+  const performanceChartData = (Array.isArray(data?.employee_performance_comparison) ? data.employee_performance_comparison : [])
+    .filter((row) => row && typeof row.score === 'number');
 
   return (
     <div className="w-full space-y-8 pb-12">
@@ -237,13 +246,9 @@ export default function OrganizationReportPage() {
           delay={0.15}
         />
         <StatCard
-          title="Avg. Employee Score"
-          value={
-            typeof data?.avg_productivity === 'number'
-              ? `${data.avg_productivity.toFixed(1)}%`
-              : data?.avg_productivity || '0.0%'
-          }
-          subtitle="Task productivity"
+          title="Average Score"
+          value={typeof data?.avg_score === 'number' ? data.avg_score.toFixed(1) : '0.0'}
+          subtitle="Mean accomplishment score"
           icon={TrendingUp}
           badgeColor="bg-indigo-500/10 border-indigo-500/20"
           iconColor="text-indigo-500 dark:text-indigo-400"
@@ -384,32 +389,62 @@ export default function OrganizationReportPage() {
                   </ResponsiveContainer>
                   {/* Center Metric */}
                   <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                    <span className="text-2xl font-black text-foreground">{data?.active_credentials || 0}</span>
-                    <span className="text-[10px] uppercase font-semibold text-muted-foreground">Active</span>
+                    <span className="text-2xl font-black text-foreground">{data?.total_credentials_issued || 0}</span>
+                    <span className="text-[10px] uppercase font-semibold text-muted-foreground">Total</span>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-2 pt-2 border-t border-border/40">
-                  <div className="p-2.5 rounded-xl bg-muted/40 border border-border/40 text-center">
-                    <div className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground mb-0.5">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                      Active
+                  {credentialStatusData.map((item) => (
+                    <div key={item.name} className="p-2.5 rounded-xl bg-muted/40 border border-border/40 text-center">
+                      <div className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground mb-0.5">
+                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: item.color }} />
+                        {item.name}
+                      </div>
+                      <p className="text-sm font-bold text-foreground">{item.value}</p>
                     </div>
-                    <p className="text-sm font-bold text-foreground">{data?.active_credentials || 0}</p>
-                  </div>
-                  <div className="p-2.5 rounded-xl bg-muted/40 border border-border/40 text-center">
-                    <div className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground mb-0.5">
-                      <span className="w-2 h-2 rounded-full bg-rose-500" />
-                      Revoked
-                    </div>
-                    <p className="text-sm font-bold text-foreground">{data?.revoked_credentials || 0}</p>
-                  </div>
+                  ))}
                 </div>
               </div>
             )}
           </div>
         </motion.div>
       </div>
+
+      <motion.div
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.45, delay: 0.32 }}
+        className="rounded-2xl bg-card border border-border/70 p-6 shadow-sm"
+      >
+        <div className="pb-6 border-b border-border/40">
+          <h2 className="text-base font-bold text-foreground flex items-center gap-2">
+            <TrendingUp className="w-4 h-4 text-indigo-500" />
+            Member Scores
+          </h2>
+          <p className="text-xs text-muted-foreground mt-0.5">Top members by the sum of recorded accomplishment scores</p>
+        </div>
+        <div className="pt-6">
+          {performanceChartData.length === 0 ? (
+            <div className="min-h-[220px] flex flex-col items-center justify-center border border-dashed border-border/60 rounded-xl p-8 text-center bg-muted/20">
+              <p className="text-sm font-medium text-foreground">No scores recorded yet</p>
+              <p className="text-xs text-muted-foreground mt-1 max-w-md">This chart fills from approved task scores stored for this organization.</p>
+            </div>
+          ) : (
+            <div className="h-[280px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={performanceChartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" className="text-border/40" />
+                  <XAxis dataKey="username" tickLine={false} axisLine={false} className="text-xs" interval={0} angle={-20} height={60} />
+                  <YAxis allowDecimals={false} tickLine={false} axisLine={false} className="text-xs" />
+                  <Tooltip />
+                  <Bar dataKey="score" fill="#6366f1" radius={[6, 6, 0, 0]} name="Score" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </div>
+      </motion.div>
 
       {/* Performance Highlights Row */}
       <motion.div
