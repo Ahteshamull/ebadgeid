@@ -110,9 +110,9 @@ services:
       retries: 10
 
   api:
-    build: "./backend (updated)"
+    build: "./backend"
     restart: unless-stopped
-    env_file: "./backend (updated)/.env"
+    env_file: "./backend/.env"
     environment:
       # Authenticated as of the security audit round -- see the mongo
       # service's own comment above for what this closes. authSource=ebadgeid
@@ -128,7 +128,7 @@ services:
       STORAGE_INTERNAL_BASE_URL: http://storage:9000
       # CRIT-02 fix (real deployment failure, reproduced and confirmed):
       # these 3 were hardcoded literal strings, not ${VAR} substitutions --
-      # meaning even a fully-correct, HTTPS, production backend (updated)/.env
+      # meaning even a fully-correct, HTTPS, production backend/.env
       # was silently overridden right back to localhost by this file
       # (Compose's `environment:` always wins over `env_file:`). The API's
       # own startup check (api.js requiring HTTPS for these in production,
@@ -208,10 +208,10 @@ services:
   # boot (`sudo systemctl enable docker` on the host) -- see
   # PRODUCTION_RUNBOOK.md.
   cron:
-    build: "./backend (updated)"
+    build: "./backend"
     command: ["node", "scripts/cronRunner.js"]
     restart: unless-stopped
-    env_file: "./backend (updated)/.env"
+    env_file: "./backend/.env"
     environment:
       MONGO_URI: mongodb://ebadgeid_app:${MONGO_APP_PASSWORD}@mongo:27017/ebadgeid?replicaSet=rs0&authSource=ebadgeid
       # Dedicated read-only user (see PRODUCTION_RUNBOOK.md) -- the
@@ -233,10 +233,10 @@ services:
         condition: service_healthy
 
   migrate:
-    build: "./backend (updated)"
+    build: "./backend"
     command: ["node", "scripts/migrate.js"]
     restart: "no"
-    env_file: "./backend (updated)/.env"
+    env_file: "./backend/.env"
     environment:
       MONGO_URI: mongodb://ebadgeid_app:${MONGO_APP_PASSWORD}@mongo:27017/ebadgeid?replicaSet=rs0&authSource=ebadgeid
     depends_on:
@@ -244,10 +244,10 @@ services:
         condition: service_completed_successfully
 
   storage:
-    build: "./backend (updated)"
+    build: "./backend"
     command: ["node", "storage.js"]
     restart: unless-stopped
-    env_file: "./backend (updated)/.env"
+    env_file: "./backend/.env"
     environment:
       PORT: 9000
       MONGO_URI: mongodb://ebadgeid_app:${MONGO_APP_PASSWORD}@mongo:27017/ebadgeid?replicaSet=rs0&authSource=ebadgeid
@@ -269,10 +269,10 @@ services:
 
   certificate:
     build:
-      context: "./backend (updated)"
+      context: "./backend"
       dockerfile: Dockerfile.certificate
     restart: unless-stopped
-    env_file: "./backend (updated)/.env"
+    env_file: "./backend/.env"
     environment:
       TEMPLATE_ALLOWED_HOSTS: storage
     # Image processing (Pillow, template rendering) is the one workload in

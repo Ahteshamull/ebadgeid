@@ -2,7 +2,7 @@ services:
   - type: web
     name: ebadgeid-api
     env: node
-    rootDir: backend (updated)
+    rootDir: backend
     buildCommand: npm install
     startCommand: node api.js
     plan: free
