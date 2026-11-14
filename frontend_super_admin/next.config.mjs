@@ -1,3 +1,7 @@
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
     // Pre-existing config gap, unrelated to SA-01..SA-06: the Dockerfile's

@@ -17,10 +17,6 @@ import { AppShellContext } from '@/components/layout/app-shell';
 // rather than replace them.
 export function DashboardShell({ children, requiredRole, chromeless = false }) {
   const { inShell } = useContext(AppShellContext);
-  if (inShell) {
-    return <>{children}</>;
-  }
-
   const [authorized, setAuthorized] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const router = useRouter();
@@ -32,6 +28,9 @@ export function DashboardShell({ children, requiredRole, chromeless = false }) {
   useEffect(() => { setSidebarOpen(false); }, [pathname]);
 
   useEffect(() => {
+    // A nested shell is already inside an authorized parent. Hooks still
+    // have to run on every render; the session check does not.
+    if (inShell) return undefined;
     let active = true;
 
     apiFetch('/auth/me', { redirectOnUnauthorized: false })
@@ -66,7 +65,11 @@ export function DashboardShell({ children, requiredRole, chromeless = false }) {
       .catch(() => router.replace('/auth/login'));
 
     return () => { active = false; };
-  }, [requiredRole, router]);
+  }, [inShell, requiredRole, router]);
+
+  if (inShell) {
+    return <>{children}</>;
+  }
 
   if (!authorized) {
     // A chromeless instance is always nested inside a full DashboardShell
